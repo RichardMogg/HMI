@@ -1,0 +1,22 @@
+{
+  "name": "Brauchwasser-Wärmepumpe HMI",
+  "short_name": "WP-HMI",
+  "description": "Bedien- und Visualisierungs-Gateway für Brauchwasser-Wärmepumpe",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#121820",
+  "theme_color": "#121820",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='40' fill='%23121820'/><circle cx='96' cy='96' r='50' fill='none' stroke='%232563eb' stroke-width='16'/><path d='M96 36v30M96 126v30' stroke='%232563eb' stroke-width='16' stroke-linecap='round'/></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='100' fill='%23121820'/><circle cx='256' cy='256' r='130' fill='none' stroke='%232563eb' stroke-width='40'/><path d='M256 96v80M256 336v80' stroke='%232563eb' stroke-width='40' stroke-linecap='round'/></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}

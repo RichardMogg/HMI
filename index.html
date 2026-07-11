@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Brauchwasser-Wärmepumpe HMI</title>
+  
+  <!-- PWA Settings -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0f141c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="Lokales Bedien- und Visualisierungs-Gateway für Brauchwasser-Wärmepumpe über ESP32-S3 und Arduino OPTA.">
+
+  <!-- Core Styling -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <div id="app-shell">
+    
+    <!-- Fixed Top Header -->
+    <header>
+      <div class="header-left" style="cursor: pointer;">
+        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+        </svg>
+        <div class="logo-text">WP-<span>HMI</span></div>
+      </div>
+      <button id="btn-menu" class="btn-icon" aria-label="Menü öffnen">
+        <svg class="icon" viewBox="0 0 24 24">
+          <line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <line x1="3" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <line x1="3" y1="18" x2="21" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </header>
+
+    <!-- Side Menu Overlay -->
+    <div id="drawer-overlay"></div>
+
+    <!-- Side Navigation Menu (Drawer) -->
+    <nav id="drawer" aria-label="Hauptmenü">
+      <div class="drawer-header">
+        <h3>HMI Navigation</h3>
+        <button id="btn-close-menu" class="btn-icon" aria-label="Menü schließen">
+          <svg class="icon" viewBox="0 0 24 24">
+            <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      
+      <ul class="drawer-menu">
+        <li class="drawer-menu-item active" data-section="home">
+          <a href="#home">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+              <polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+            Dashboard
+          </a>
+        </li>
+        <li class="drawer-menu-item" data-section="values">
+          <a href="#values">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="20" x2="18" y2="10"/>
+              <line x1="12" y1="20" x2="12" y2="4"/>
+              <line x1="6" y1="20" x2="6" y2="14"/>
+            </svg>
+            Systemwerte
+          </a>
+        </li>
+        <li class="drawer-menu-item" data-section="settings">
+          <a href="#settings">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            Einstellungen
+          </a>
+        </li>
+      </ul>
+
+      <!-- Modbus Connection Simulator (Basement Test Utility) -->
+      <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid var(--border-color);">
+        <h4 style="font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px; letter-spacing: 0.5px;">Schnittstellen-Simulation</h4>
+        <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-color);">
+          <span style="font-size: 0.85rem; font-weight: 500;">Modbus RTU aktiv</span>
+          <label class="switch" style="transform: scale(0.85);">
+            <input type="checkbox" id="modbus-toggle" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Toast Banner System (Notifications) -->
+    <div id="toast-container"></div>
+
+    <!-- Main View Area -->
+    <main>
+      
+      <!-- ================= HOMESCREEN SECTION ================= -->
+      <div id="section-home" class="content-container active">
+        
+        <!-- On/Off Switch -->
+        <div class="power-section">
+          <div class="power-label">
+            <span class="power-title">Betriebszustand</span>
+            <span id="power-status-text" class="power-subtitle">In Betrieb</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="power-switch" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Temperature Controller Widget -->
+        <div class="dial-container">
+          <div class="dial-controls">
+            <button id="btn-minus" class="btn-round" aria-label="Sollwert senken">−</button>
+            
+            <div class="radial-dial">
+              <svg id="radial-dial-svg" viewBox="0 0 200 200">
+                <!-- Outer Track -->
+                <circle cx="100" cy="100" r="80" class="track"/>
+                <!-- Filled Value Gauge -->
+                <circle id="dial-fill" cx="100" cy="100" r="80" class="fill" stroke-dasharray="502.65" stroke-dashoffset="150"/>
+              </svg>
+              <div class="dial-text">
+                <span class="dial-label">Sollwert</span>
+                <span id="setpoint-num" class="dial-val-number">48.0</span>
+                <span class="dial-val-unit">°C</span>
+                <span id="current-temp-dial-sub" style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px; font-weight: 500;">Ist: --</span>
+              </div>
+            </div>
+            
+            <button id="btn-plus" class="btn-round" aria-label="Sollwert erhöhen">+</button>
+          </div>
+          
+          <!-- Warning badge if temperature is above 55°C (lime scaling warning) -->
+          <div id="dial-warning-badge" class="badge badge-warning" style="display: none; padding: 6px 12px; margin-top: -8px;">
+            ⚠️ Temp > 55 °C: Erhöhte Verkalkungsgefahr!
+          </div>
+        </div>
+
+        <!-- Dashboard Cards Grid -->
+        <div class="card-grid" style="margin-top: 16px; width: 100%;">
+          
+          <!-- Card: Warmwasser Ist-Temperatur -->
+          <div class="card">
+            <div class="card-title">
+              Warmwasser-Ist
+              <svg class="icon" style="color: var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>
+              </svg>
+            </div>
+            <div id="current-temp-val" class="card-value">
+              45.2 <span class="unit">°C</span>
+            </div>
+            <div class="card-footer">Aktueller Sensorwert im Speicher</div>
+          </div>
+
+          <!-- Card: Modbus Verbindung -->
+          <div class="card">
+            <div class="card-title">
+              SPS Verbindung
+              <svg class="icon" style="color: var(--text-muted)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+                <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+                <line x1="6" y1="6" x2="6.01" y2="6"/>
+                <line x1="6" y1="18" x2="6.01" y2="18"/>
+              </svg>
+            </div>
+            <div style="margin-top: 8px;">
+              <span id="modbus-badge" class="badge badge-success">Modbus RTU OK</span>
+            </div>
+            <div class="card-footer">Kommunikation mit Arduino OPTA</div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- ================= VALUES SECTION ================= -->
+      <div id="section-values" class="content-container">
+        <h2 class="page-title">Anlagen-Systemwerte</h2>
+        
+        <div class="values-list">
+          <div class="values-row">
+            <span class="values-label">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary);"></span>
+              Warmwasser-Isttemperatur
+            </span>
+            <span id="val-ist-temp" class="values-val">45.2 <span class="unit">°C</span></span>
+          </div>
+          
+          <div class="values-row">
+            <span class="values-label">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary);"></span>
+              Verdampfertemperatur
+            </span>
+            <span id="val-evap-temp" class="values-val">6.4 <span class="unit">°C</span></span>
+          </div>
+          
+          <div class="values-row">
+            <span class="values-label">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary);"></span>
+              Lüfterdrehzahl
+            </span>
+            <span id="val-fan-speed" class="values-val">1450 <span class="unit">U/min</span></span>
+          </div>
+          
+          <div class="values-row">
+            <span class="values-label">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary);"></span>
+              Zusatzheizung (Heizstab)
+            </span>
+            <span id="val-heater-state" class="values-val">Aus</span>
+          </div>
+
+          <div class="values-row">
+            <span class="values-label">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary);"></span>
+              Modbus RTU Übertragungsstatus
+            </span>
+            <span id="val-modbus-state" class="badge badge-success">Bereit</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= SETTINGS SECTION ================= -->
+      <div id="section-settings" class="content-container">
+        <h2 class="page-title">Anlagen-Einstellungen</h2>
+        
+        <div class="card-grid" style="grid-template-columns: 1fr; gap: 20px;">
+          
+          <!-- Card: Betriebsmodus -->
+          <div class="card">
+            <h3 class="card-title">Betriebsmodus</h3>
+            <div class="form-group" style="margin-top: 10px;">
+              <label for="opt-operation-mode">Wählen Sie den gewünschten Heizmodus aus:</label>
+              <select id="opt-operation-mode" class="input-control">
+                <option value="wp">Wärmepumpe (Eco)</option>
+                <option value="wp_stab">Wärmepumpe + Heizstab (Hybrid)</option>
+                <option value="stab">Nur Heizstab (Notbetrieb)</option>
+                <option value="ext">Externe Heizung (Gas/Holz)</option>
+                <option value="wp_ext">Wärmepumpe + Extern</option>
+              </select>
+            </div>
+            <div class="card-footer">Die SPS regelt die Ansteuerung entsprechend der Effizienzkurve.</div>
+          </div>
+
+          <!-- Card: Legionellen-Desinfektion -->
+          <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+              <h3 class="card-title" style="margin: 0;">Legionellen-Desinfektion</h3>
+              <span id="disinf-status-badge" class="badge badge-inactive">Inaktiv</span>
+            </div>
+            
+            <p style="font-size: 0.875rem; color: var(--text-muted); line-height: 1.4; margin-top: 12px;">
+              Durch das Aufheizen des Wasserspiegels auf höhere Temperaturen werden pathogene Keime zuverlässig abgetötet.
+            </p>
+
+            <!-- Disinfection Configuration Fields -->
+            <div class="disinfection-controls-grid">
+              <div class="form-group">
+                <label for="disinf-target">Zieltemperatur (°C)</label>
+                <input type="number" id="disinf-target" class="input-control" min="60" max="70" value="62">
+              </div>
+              <div class="form-group">
+                <label for="disinf-hold">Haltedauer (Minuten)</label>
+                <input type="number" id="disinf-hold" class="input-control" min="30" max="180" value="45">
+              </div>
+              <div class="form-group" style="grid-column: 1 / -1;">
+                <label for="disinf-max-time">Max. Aufheizzeit (Minuten)</label>
+                <input type="number" id="disinf-max-time" class="input-control" min="60" max="360" value="120">
+              </div>
+            </div>
+
+            <!-- Simulation Metrics -->
+            <div id="disinf-current-metrics" style="background: var(--bg-primary); border: 1px solid var(--border-color); padding: 12px; border-radius: 6px; font-size: 0.85rem; color: var(--text-main); margin-top: 12px; display: none;">
+              Aufheizphase läuft...
+            </div>
+
+            <!-- Start Button / Toggle -->
+            <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-top: 16px;">
+              <span style="font-weight: 600; font-size: 0.95rem;">Desinfektion starten</span>
+              <label class="switch">
+                <input type="checkbox" id="disinf-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
+            
+            <div class="card-footer">Hinweis: Desinfektion deaktiviert den Standard-Eco-Modus während des Heizens.</div>
+          </div>
+
+          <!-- Card: WLAN Access Point -->
+          <div class="card">
+            <h3 class="card-title">Lokales WLAN-Netzwerk</h3>
+            <p style="font-size: 0.875rem; color: var(--text-muted); line-height: 1.4; margin-top: 6px;">
+              Konfiguration des lokalen Access-Points, der vom ESP32-S3 Gateway zur Verfügung gestellt wird.
+            </p>
+            <div style="margin-top: 16px;">
+              <button onclick="navigateTo('wifi')" class="btn-secondary">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+                  <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+                  <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+                  <line x1="12" y1="20" x2="12.01" y2="20" stroke-width="3" stroke-linecap="round"/>
+                </svg>
+                WLAN-Einstellungen konfigurieren
+              </button>
+            </div>
+            <div class="card-footer">Gateway läuft als lokales, offline-fähiges Captive Portal.</div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ================= WIFI SETTINGS SECTION ================= -->
+      <div id="section-wifi" class="content-container">
+        <h2 class="page-title">WLAN Access-Point konfigurieren</h2>
+        
+        <div class="card">
+          <form id="wifi-form" novalidate>
+            <div class="form-group">
+              <label for="wifi-ssid">WLAN Name (SSID)</label>
+              <input type="text" id="wifi-ssid" class="input-control" placeholder="Wiederholen Sie den WLAN-Namen" required>
+            </div>
+            
+            <div class="form-group">
+              <label for="wifi-pass">Neues Passwort</label>
+              <input type="password" id="wifi-pass" class="input-control" placeholder="Mindestens 8 Zeichen" required>
+            </div>
+            
+            <div class="form-group">
+              <label for="wifi-pass-confirm">Passwort wiederholen</label>
+              <input type="password" id="wifi-pass-confirm" class="input-control" placeholder="Gleiches Passwort eingeben" required>
+            </div>
+
+            <div style="margin-top: 24px; display: flex; flex-direction: column; gap: 12px;">
+              <button type="submit" class="btn-primary">
+                Speichern und neu starten
+              </button>
+              <button type="button" onclick="navigateTo('settings')" class="btn-secondary">
+                Abbrechen
+              </button>
+            </div>
+          </form>
+          
+          <div class="card-footer" style="margin-top: 20px;">
+            ⚠️ Nach dem Speichern startet der ESP32 den Access Point neu. Sie werden getrennt und müssen sich neu mit den neuen Zugangsdaten verbinden.
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Modal overlay for Reboot Countdown -->
+  <div id="reboot-modal" class="modal-overlay">
+    <div class="modal-container">
+      <svg class="modal-icon" style="color: var(--color-warning);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+      </svg>
+      <h3 class="modal-title">Gateway wird neu gestartet</h3>
+      <p class="modal-text">
+        Die WLAN-Einstellungen wurden gespeichert. Das Gateway startet den Access Point neu. Ihre Verbindung wird getrennt.<br><br>
+        Verbindungsaufbau in:
+      </p>
+      <div id="reboot-countdown" style="font-size: 3.5rem; font-weight: 800; color: var(--color-warning); margin-bottom: 24px;">10</div>
+      <p style="font-size: 0.8rem; color: var(--text-muted);">
+        Bitte suchen Sie anschließend in Ihren WLAN-Einstellungen nach der geänderten SSID und melden Sie sich erneut an.
+      </p>
+    </div>
+  </div>
+
+  <!-- Core Javascript Logic -->
+  <script src="js/app.js"></script>
+</body>
+</html>
