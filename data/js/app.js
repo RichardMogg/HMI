@@ -5,22 +5,22 @@
    ========================================================================== 
 */
 
-// --- Global Application State & Simulation Data ---
+// --- Global Application State ---
 const state = {
   powerOn: true,
-  setpoint: 48.0, // °C
-  currentTemp: 45.2, // °C
-  evaporatorTemp: 6.4, // °C
-  fanSpeed: 1450, // RPM
+  setpoint: 48.0, 
+  currentTemp: 45.2, 
+  evaporatorTemp: 6.4, 
+  fanSpeed: 1450, 
   heatingActive: true,
   modbusConnected: true,
   
   // Legionellen-Desinfektion
   disinfActive: false,
-  disinfTarget: 62, // °C (60°C bis 70°C)
-  disinfHold: 45, // Minuten (30 bis 180 Min)
-  disinfMaxTime: 120, // Minuten (60 bis 360 Min)
-  disinfStatus: 'idle', // idle, heating, holding, completed, failed
+  disinfTarget: 62, 
+  disinfHold: 45, 
+  disinfMaxTime: 120, 
+  disinfStatus: 'idle', 
   disinfElapsedMinutes: 0,
   disinfHoldMinutesElapsed: 0,
   
@@ -28,7 +28,6 @@ const state = {
   wifiSsid: 'Wärmepumpe-Gateway-AP',
   
   // Betriebsmodus
-  // wp = Wärmepumpe, wp_stab = WP + Heizstab, stab = Nur Heizstab, ext = Externe Heizung, wp_ext = WP + Extern
   operationMode: 'wp',
 };
 
@@ -37,6 +36,9 @@ const TEMP_MIN = 5.0;
 const TEMP_MAX = 60.0;
 const DIAL_RADIUS = 80;
 const DIAL_CIRCUMFERENCE = 2 * Math.PI * DIAL_RADIUS; // ~502.65
+
+// Hybrid API & Simulation Mode flag
+let useLocalSimulation = false;
 
 // UI References
 const UI = {
@@ -50,7 +52,7 @@ const UI = {
   btnPlus: document.getElementById('btn-plus'),
   radialDialSvg: document.getElementById('radial-dial-svg'),
   
-  // Modbus connection simulator
+  // Modbus connection simulator (Only shown/used when running locally in browser)
   modbusToggle: document.getElementById('modbus-toggle'),
   modbusBadge: document.getElementById('modbus-badge'),
   
@@ -137,19 +139,90 @@ function showToast(message, type = 'success', duration = 4000) {
   }, duration);
 }
 
+// --- Rest API Kommunikation ---
+function postData(endpoint, data) {
+  if (useLocalSimulation) {
+    return Promise.resolve({ status: 'ok' });
+  }
+  
+  return fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(data)
+  })
+  .then(res => {
+    if (!res.ok) throw new Error('API-Anfrage fehlgeschlagen');
+    return res.json();
+  })
+  .catch(err => {
+    console.error(`Fehler bei POST ${endpoint}:`, err);
+    showToast('Übertragungsfehler zum ESP32-Gateway.', 'error');
+    throw err;
+  });
+}
+
+function fetchStatus() {
+  fetch('/api/status')
+    .then(res => {
+      if (!res.ok) throw new Error('Status konnte nicht abgerufen werden');
+      return res.json();
+    })
+    .then(data => {
+      // Wenn wir zuvor im Simulationsmodus waren, schalten wir um
+      if (useLocalSimulation) {
+        useLocalSimulation = false;
+        console.log("ESP32 API erkannt. Lokale Simulation deaktiviert.");
+      }
+      
+      // Zustand mit echten Werten aktualisieren
+      state.powerOn = data.powerOn;
+      if (!isDragging) {
+        state.setpoint = data.setpoint;
+      }
+      state.currentTemp = data.currentTemp;
+      state.evaporatorTemp = data.evaporatorTemp;
+      state.fanSpeed = data.fanSpeed;
+      state.heatingActive = data.heatingActive;
+      state.modbusConnected = data.modbusConnected;
+      
+      state.disinfActive = data.disinfActive;
+      state.disinfTarget = data.disinfTarget;
+      state.disinfHold = data.disinfHold;
+      state.disinfMaxTime = data.disinfMaxTime;
+      state.disinfStatus = data.disinfStatus;
+      
+      updateDOM();
+    })
+    .catch(err => {
+      // Falls der Fetch fehlschlägt und wir nicht auf localhost/IP sind,
+      // wechseln wir automatisch in den Simulationsmodus (für lokale Entwicklung)
+      if (!useLocalSimulation) {
+        useLocalSimulation = true;
+        console.warn("Verbindung zum ESP32 fehlgeschlagen. Starte lokalen Simulationsmodus für Demo-Zwecke.", err);
+      }
+      
+      if (useLocalSimulation) {
+        // Im Simulationsmodus lassen wir die Simulation laufen
+        runSimulationTick();
+      } else {
+        state.modbusConnected = false;
+        updateDOM();
+      }
+    });
+}
+
 // --- Routing (Single Page App) ---
 function navigateTo(sectionId) {
-  // Hide all sections
   Object.keys(UI.sections).forEach(key => {
     UI.sections[key].classList.remove('active');
   });
   
-  // Show target section
   if (UI.sections[sectionId]) {
     UI.sections[sectionId].classList.add('active');
   }
   
-  // Update active state in side navigation
   UI.menuItems.forEach(item => {
     item.classList.remove('active');
     if (item.getAttribute('data-section') === sectionId) {
@@ -157,20 +230,18 @@ function navigateTo(sectionId) {
     }
   });
   
-  // Close menu drawer
   closeDrawer();
   
-  // Trigger specific page load updates
   if (sectionId === 'wifi') {
     UI.inputSsid.value = state.wifiSsid;
     UI.inputPass.value = '';
     UI.inputPassConfirm.value = '';
   }
   
-  // Scroll to top of the page
   window.scrollTo(0, 0);
 }
 
+// Drawer toggles
 function openDrawer() {
   UI.drawer.classList.add('open');
   UI.drawerOverlay.classList.add('open');
@@ -183,19 +254,13 @@ function closeDrawer() {
 
 // --- UI Rendering Helpers ---
 function updateDialUI() {
-  // Calculate percentage of target temperature
   const percentage = (state.setpoint - TEMP_MIN) / (TEMP_MAX - TEMP_MIN);
-  
-  // Calculate stroke offset
-  // We want the gauge arc to go from -225° to +45° (270 degrees total)
-  // To keep it simple, we fill out of the full circumference
   const arcLength = 270 / 360 * DIAL_CIRCUMFERENCE;
   const dashOffset = DIAL_CIRCUMFERENCE - (percentage * arcLength);
   
   UI.dialFill.style.strokeDashoffset = dashOffset;
   UI.setpointNum.textContent = state.setpoint.toFixed(1);
   
-  // Temperature > 55 °C warning
   if (state.setpoint > 55.0) {
     UI.dialFill.classList.add('warning-state');
     document.getElementById('dial-warning-badge').style.display = 'block';
@@ -221,12 +286,12 @@ function updateDOM() {
   
   if (!state.modbusConnected) {
     UI.currentTempCard.innerHTML = `<span style="font-size: 1.5rem; color: var(--color-error);">KEINE VERBINDUNG</span>`;
-    UI.currentTempDial.innerHTML = `--`;
+    UI.currentTempDial.innerHTML = `Ist: --`;
     UI.powerStatusText.textContent = 'Verbindung unterbrochen';
     UI.powerStatusText.style.color = 'var(--color-error)';
   } else {
     UI.currentTempCard.innerHTML = `${state.currentTemp.toFixed(1)} <span class="unit">°C</span>`;
-    UI.currentTempDial.innerHTML = `${state.currentTemp.toFixed(1)}<span class="dial-val-unit">°C</span>`;
+    UI.currentTempDial.innerHTML = `Ist: ${state.currentTemp.toFixed(1)}°C`;
     
     if (state.powerOn) {
       if (state.disinfActive) {
@@ -276,7 +341,6 @@ function updateDOM() {
   UI.optOpMode.value = state.operationMode;
   UI.disinfToggle.checked = state.disinfActive;
   
-  // Disinfection Inputs & Status
   UI.inputDisinfTarget.value = state.disinfTarget;
   UI.inputDisinfHold.value = state.disinfHold;
   UI.inputDisinfMaxTime.value = state.disinfMaxTime;
@@ -318,152 +382,128 @@ function handleDialInteraction(clientX, clientY) {
   const centerX = rect.left + rect.width / 2;
   const centerY = rect.top + rect.height / 2;
   
-  // Calculate angle in radians
   const dx = clientX - centerX;
   const dy = clientY - centerY;
-  let angle = Math.atan2(dy, dx) * (180 / Math.PI); // -180 to 180
+  let angle = Math.atan2(dy, dx) * (180 / Math.PI);
   
-  // Convert angle to [0, 360] representation starting from bottom-left gap
-  // The gap is at bottom (-90 deg rotation on SVG puts top at 0, gap is at 270 deg / 90 deg visual)
-  // Let's normalize so -135° (gap start) is 0%, and 135° (gap end) is 100%
-  // Visually: gap is from 45deg to 135deg (relative to top center being -90deg)
-  // A robust mathematical way:
-  angle = angle + 90; // Top is 0, right is 90, bottom is 180, left is 270
+  angle = angle + 90; 
   if (angle < 0) angle += 360;
   
-  // Map angle to setpoint. The usable arc is 270 degrees.
-  // Start is at 225° (bottom left) and goes clockwise to 135° (bottom right)
   let normalizedAngle = angle - 225;
   if (normalizedAngle < 0) normalizedAngle += 360;
   
-  // Clamp to our 270 degree track
   if (normalizedAngle > 270) {
     if (normalizedAngle < 315) {
-      normalizedAngle = 0; // closer to bottom-left
+      normalizedAngle = 0;
     } else {
-      normalizedAngle = 270; // closer to bottom-right
+      normalizedAngle = 270;
     }
   }
   
   const pct = normalizedAngle / 270;
   const newSetpoint = TEMP_MIN + pct * (TEMP_MAX - TEMP_MIN);
   
-  // Step resolution to 0.5 degrees
   state.setpoint = Math.round(newSetpoint * 2) / 2;
   updateDOM();
 }
 
-// --- Modbus RTU / SPS State Simulation Loop ---
-setInterval(() => {
-  if (!state.modbusConnected) {
-    updateDOM();
-    return;
-  }
-  
-  if (state.powerOn) {
-    // --- Legionellen-Desinfektion aktiv ---
-    if (state.disinfActive) {
-      state.disinfElapsedMinutes += 1; // 1 Sekunde Echtzeit = 1 Minute Simulation
-      
-      if (state.disinfStatus === 'heating') {
-        // Temperature rises fast because electric heater is full on
-        state.currentTemp += 1.2;
-        state.fanSpeed = 0; // compressor off, only heating rod
-        state.evaporatorTemp = 16.0; // goes to room temp
-        state.heatingActive = true;
-        
-        if (state.currentTemp >= state.disinfTarget) {
-          state.currentTemp = state.disinfTarget;
-          state.disinfStatus = 'holding';
-          state.disinfHoldMinutesElapsed = 0;
-          showToast(`Zieltemperatur ${state.disinfTarget}°C erreicht. Haltephase startet.`, 'warning');
-        } else if (state.disinfElapsedMinutes >= state.disinfMaxTime) {
-          // Failure condition: Time limit reached
-          state.disinfStatus = 'failed';
-          showToast(`ALARM: Desinfektion abgebrochen. Zieltemp. nicht innerhalb von ${state.disinfMaxTime} min erreicht!`, 'error', 10000);
-        }
-      } else if (state.disinfStatus === 'holding') {
-        state.disinfHoldMinutesElapsed += 1;
-        // Keep temp close to target
-        state.currentTemp = state.disinfTarget + (Math.random() * 0.4 - 0.2);
-        state.heatingActive = true;
-        
-        if (state.disinfHoldMinutesElapsed >= state.disinfHold) {
-          state.disinfStatus = 'completed';
-          state.disinfActive = false;
-          showToast(`Desinfektion erfolgreich abgeschlossen.`, 'success');
-        }
-      }
-    }
-    // --- Normalbetrieb active ---
-    else {
-      const hysteresis = 1.5;
-      if (state.currentTemp < state.setpoint - hysteresis) {
-        state.heatingActive = true;
-      } else if (state.currentTemp >= state.setpoint) {
-        state.heatingActive = false;
-      }
-      
-      if (state.heatingActive) {
-        // Heat pump heating cycle simulation
-        state.currentTemp += 0.08;
-        if (state.currentTemp > state.setpoint) state.currentTemp = state.setpoint;
-        
-        // Evaporator cools down, fan spins
-        state.fanSpeed = 1450 + Math.floor(Math.random() * 40 - 20);
-        state.evaporatorTemp = Math.max(-5.0, state.evaporatorTemp - 0.2);
-      } else {
-        // Cooled down naturally, fan off
-        state.currentTemp -= 0.02;
-        state.fanSpeed = 0;
-        state.evaporatorTemp = Math.min(15.0, state.evaporatorTemp + 0.15);
-      }
-    }
-  } else {
-    // Power Off
+// --- Lokale Simulation (Fallback) ---
+function runSimulationTick() {
+  if (!state.powerOn) {
     state.heatingActive = false;
     state.disinfActive = false;
     state.fanSpeed = 0;
     state.evaporatorTemp = Math.min(15.0, state.evaporatorTemp + 0.1);
-    state.currentTemp = Math.max(18.0, state.currentTemp - 0.05); // Cool down to room temp
+    state.currentTemp = Math.max(18.0, state.currentTemp - 0.05);
+    updateDOM();
+    return;
   }
   
+  if (state.disinfActive) {
+    state.disinfElapsedMinutes += 1;
+    if (state.disinfStatus === 'heating') {
+      state.currentTemp += 1.2;
+      state.fanSpeed = 0;
+      state.evaporatorTemp = 16.0;
+      state.heatingActive = true;
+      
+      if (state.currentTemp >= state.disinfTarget) {
+        state.currentTemp = state.disinfTarget;
+        state.disinfStatus = 'holding';
+        state.disinfHoldMinutesElapsed = 0;
+        showToast(`Zieltemperatur ${state.disinfTarget}°C erreicht. Haltephase startet.`, 'warning');
+      } else if (state.disinfElapsedMinutes >= state.disinfMaxTime) {
+        state.disinfStatus = 'failed';
+        showToast(`ALARM: Desinfektion abgebrochen. Zieltemp. nicht innerhalb von ${state.disinfMaxTime} min erreicht!`, 'error', 10000);
+      }
+    } else if (state.disinfStatus === 'holding') {
+      state.disinfHoldMinutesElapsed += 1;
+      state.currentTemp = state.disinfTarget + (Math.random() * 0.4 - 0.2);
+      state.heatingActive = true;
+      
+      if (state.disinfHoldMinutesElapsed >= state.disinfHold) {
+        state.disinfStatus = 'completed';
+        state.disinfActive = false;
+        showToast(`Desinfektion erfolgreich abgeschlossen.`, 'success');
+      }
+    }
+  } else {
+    const hysteresis = 1.5;
+    if (state.currentTemp < state.setpoint - hysteresis) {
+      state.heatingActive = true;
+    } else if (state.currentTemp >= state.setpoint) {
+      state.heatingActive = false;
+    }
+    
+    if (state.heatingActive) {
+      state.currentTemp += 0.08;
+      if (state.currentTemp > state.setpoint) state.currentTemp = state.setpoint;
+      state.fanSpeed = 1450 + Math.floor(Math.random() * 40 - 20);
+      state.evaporatorTemp = Math.max(-5.0, state.evaporatorTemp - 0.2);
+    } else {
+      state.currentTemp -= 0.02;
+      state.fanSpeed = 0;
+      state.evaporatorTemp = Math.min(15.0, state.evaporatorTemp + 0.15);
+    }
+  }
   updateDOM();
-}, 2000);
+}
 
-// --- Event Listeners & Bootstrapping ---
+// --- Event Listeners ---
 function initEvents() {
-  // Navigation Menu drawer toggles
   UI.btnMenu.addEventListener('click', openDrawer);
   UI.btnCloseMenu.addEventListener('click', closeDrawer);
   UI.drawerOverlay.addEventListener('click', closeDrawer);
   
-  // Navigation Links click routing
   UI.menuItems.forEach(item => {
     item.addEventListener('click', (e) => {
       e.preventDefault();
-      const targetSection = item.getAttribute('data-section');
-      navigateTo(targetSection);
+      navigateTo(item.getAttribute('data-section'));
     });
   });
   
-  // Power Toggle Switch
+  // Power Switch Event
   UI.powerSwitch.addEventListener('change', (e) => {
-    state.powerOn = e.target.checked;
-    if (!state.powerOn && state.disinfActive) {
-      state.disinfActive = false;
-      state.disinfStatus = 'idle';
-    }
-    updateDOM();
-    showToast(state.powerOn ? 'Anlage eingeschaltet.' : 'Anlage ausgeschaltet.', 'success');
+    const newPowerState = e.target.checked;
+    postData('/api/power', { powerOn: newPowerState })
+      .then(res => {
+        state.powerOn = newPowerState;
+        if (!state.powerOn) {
+          state.disinfActive = false;
+          state.disinfStatus = 'idle';
+        }
+        updateDOM();
+        showToast(state.powerOn ? 'Anlage eingeschaltet.' : 'Anlage ausgeschaltet.', 'success');
+      });
   });
   
-  // Flanking Plus/Minus Buttons
+  // Plus/Minus Buttons
   UI.btnMinus.addEventListener('click', () => {
     if (!state.powerOn || !state.modbusConnected || state.disinfActive) return;
     if (state.setpoint > TEMP_MIN) {
       state.setpoint -= 0.5;
       updateDOM();
+      postData('/api/setpoint', { setpoint: state.setpoint });
     }
   });
   
@@ -472,10 +512,11 @@ function initEvents() {
     if (state.setpoint < TEMP_MAX) {
       state.setpoint += 0.5;
       updateDOM();
+      postData('/api/setpoint', { setpoint: state.setpoint });
     }
   });
   
-  // Radial dial mouse & touch listeners
+  // Radial dial drag interaction
   UI.radialDialSvg.addEventListener('mousedown', (e) => {
     isDragging = true;
     handleDialInteraction(e.clientX, e.clientY);
@@ -488,7 +529,10 @@ function initEvents() {
   });
   
   window.addEventListener('mouseup', () => {
-    isDragging = false;
+    if (isDragging) {
+      isDragging = false;
+      postData('/api/setpoint', { setpoint: state.setpoint });
+    }
   });
   
   // Touch support for radial dial
@@ -506,7 +550,10 @@ function initEvents() {
   }, { passive: false });
   
   window.addEventListener('touchend', () => {
-    isDragging = false;
+    if (isDragging) {
+      isDragging = false;
+      postData('/api/setpoint', { setpoint: state.setpoint });
+    }
   });
   
   // Modbus Simulator Switch
@@ -516,21 +563,25 @@ function initEvents() {
     showToast(state.modbusConnected ? 'Modbus-Verbindung wiederhergestellt.' : 'Modbus-Kommunikationsfehler ausgelöst!', state.modbusConnected ? 'success' : 'error');
   });
   
-  // Settings Mode change dropdown
+  // Settings Screen: Betriebsmodus
   UI.optOpMode.addEventListener('change', (e) => {
-    state.operationMode = e.target.value;
-    updateDOM();
-    showToast('Betriebsmodus geändert.', 'success');
+    const newMode = e.target.value;
+    postData('/api/mode', { mode: newMode })
+      .then(() => {
+        state.operationMode = newMode;
+        updateDOM();
+        showToast('Betriebsmodus geändert.', 'success');
+      });
   });
   
-  // Disinfection settings changes
+  // Settings Screen: Disinfection parameters change local updates
   UI.inputDisinfTarget.addEventListener('change', (e) => {
     const val = parseInt(e.target.value);
     if (val >= 60 && val <= 70) {
       state.disinfTarget = val;
     } else {
       UI.inputDisinfTarget.value = state.disinfTarget;
-      showToast('Gültiger Bereich für Zieltemperatur: 60°C - 70°C', 'error');
+      showToast('Zieltemperatur: 60°C - 70°C', 'error');
     }
   });
   
@@ -540,7 +591,7 @@ function initEvents() {
       state.disinfHold = val;
     } else {
       UI.inputDisinfHold.value = state.disinfHold;
-      showToast('Gültiger Bereich für Haltedauer: 30 - 180 Minuten', 'error');
+      showToast('Haltedauer: 30 - 180 Minuten', 'error');
     }
   });
   
@@ -550,29 +601,38 @@ function initEvents() {
       state.disinfMaxTime = val;
     } else {
       UI.inputDisinfMaxTime.value = state.disinfMaxTime;
-      showToast('Gültiger Bereich für maximale Heizzeit: 60 - 360 Minuten', 'error');
+      showToast('Maximale Aufheizzeit: 60 - 360 Minuten', 'error');
     }
   });
   
-  // Disinfection Toggle Switch
+  // Settings Screen: Disinfection Toggle Switch
   UI.disinfToggle.addEventListener('change', (e) => {
     if (!state.powerOn) {
       UI.disinfToggle.checked = false;
-      showToast('Desinfektion kann nur bei eingeschalteter Anlage gestartet werden.', 'warning');
+      showToast('Desinfektion erfordert eingeschaltete Anlage.', 'warning');
       return;
     }
     
-    state.disinfActive = e.target.checked;
-    if (state.disinfActive) {
-      state.disinfStatus = 'heating';
-      state.disinfElapsedMinutes = 0;
-      state.disinfHoldMinutesElapsed = 0;
-      showToast('Legionellen-Desinfektion gestartet. Aufheizphase aktiv.', 'warning');
-    } else {
-      state.disinfStatus = 'idle';
-      showToast('Legionellen-Desinfektion manuell gestoppt.', 'info');
-    }
-    updateDOM();
+    const nextActiveState = e.target.checked;
+    postData('/api/disinfection', {
+      active: nextActiveState,
+      target: state.disinfTarget,
+      hold: state.disinfHold,
+      maxTime: state.disinfMaxTime
+    })
+    .then(() => {
+      state.disinfActive = nextActiveState;
+      if (state.disinfActive) {
+        state.disinfStatus = 'heating';
+        state.disinfElapsedMinutes = 0;
+        state.disinfHoldMinutesElapsed = 0;
+        showToast('Legionellen-Desinfektion gestartet.', 'warning');
+      } else {
+        state.disinfStatus = 'idle';
+        showToast('Legionellen-Desinfektion manuell gestoppt.', 'info');
+      }
+      updateDOM();
+    });
   });
   
   // WiFi Form Submit handling
@@ -583,70 +643,68 @@ function initEvents() {
     const newPass = UI.inputPass.value;
     const confirmPass = UI.inputPassConfirm.value;
     
-    // Validations
     if (!newSsid) {
       showToast('WLAN-Name darf nicht leer sein.', 'error');
       return;
     }
-    
     if (newPass.length < 8) {
       showToast('Passwort muss mindestens 8 Zeichen lang sein.', 'error');
       return;
     }
-    
     if (newPass !== confirmPass) {
       showToast('Die Passwörter stimmen nicht überein.', 'error');
       return;
     }
     
-    // Save to state (Simulated ESP32 save)
-    state.wifiSsid = newSsid;
-    
-    // Trigger Reboot Modal sequence
-    UI.rebootModal.classList.add('active');
-    let timeLeft = 10;
-    UI.rebootCountdown.textContent = timeLeft;
-    
-    const timer = setInterval(() => {
-      timeLeft -= 1;
-      UI.rebootCountdown.textContent = timeLeft;
-      
-      if (timeLeft <= 0) {
-        clearInterval(timer);
-        UI.rebootModal.classList.remove('active');
-        showToast('Gateway neu gestartet. Bitte verbinde dich neu.', 'warning');
-        // Reset inputs
-        UI.inputPass.value = '';
-        UI.inputPassConfirm.value = '';
-        navigateTo('home');
-      }
-    }, 1000);
+    postData('/api/wifi', { ssid: newSsid, password: newPass })
+      .then(res => {
+        // Trigger Reboot Modal sequence
+        UI.rebootModal.classList.add('active');
+        let timeLeft = 10;
+        UI.rebootCountdown.textContent = timeLeft;
+        
+        const timer = setInterval(() => {
+          timeLeft -= 1;
+          UI.rebootCountdown.textContent = timeLeft;
+          
+          if (timeLeft <= 0) {
+            clearInterval(timer);
+            UI.rebootModal.classList.remove('active');
+            showToast('Gateway neu gestartet. Bitte verbinde dich neu.', 'warning');
+            UI.inputPass.value = '';
+            UI.inputPassConfirm.value = '';
+            state.wifiSsid = newSsid;
+            navigateTo('home');
+          }
+        }, 1000);
+      });
   });
   
-  // Header Logo click takes home
   document.querySelector('.header-left').addEventListener('click', () => navigateTo('home'));
 }
 
-// Service Worker Registration for PWA support
+// Service Worker for PWA
 function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./sw.js')
-        .then(reg => console.log('ServiceWorker erfolgreich registriert: ', reg.scope))
-        .catch(err => console.log('ServiceWorker Registrierung fehlgeschlagen: ', err));
+        .then(reg => console.log('ServiceWorker registriert: ', reg.scope))
+        .catch(err => console.log('ServiceWorker verfehlt: ', err));
     });
   }
 }
 
-// Application startup
+// App bootstrapping
 document.addEventListener('DOMContentLoaded', () => {
   initEvents();
   registerServiceWorker();
   
-  // Radial dial circle arc layout initializer
   const arcLength = 270 / 360 * DIAL_CIRCUMFERENCE;
   UI.dialFill.style.strokeDasharray = `${DIAL_CIRCUMFERENCE} ${DIAL_CIRCUMFERENCE}`;
   
-  // Initial render
-  updateDOM();
+  // Initial Statusabruf vom ESP32
+  fetchStatus();
+  
+  // Regelmäßiger Abruf alle 2 Sekunden
+  setInterval(fetchStatus, 2000);
 });

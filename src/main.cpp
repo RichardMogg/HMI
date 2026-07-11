@@ -4,10 +4,12 @@
 #include <DNSServer.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 
-// --- WLAN-Konfiguration ---
-const char* apSSID = "Waermepumpe-Gateway-AP";
-const char* apPassword = "testpassword123"; // Mindestens 8 Zeichen!
+// --- Globale Variablen & Präferenzen ---
+Preferences preferences;
+String apSSID;
+String apPassword;
 
 // --- Globale Register / Variablen (Modbus-Status-Mocks) ---
 struct HMIState {
@@ -18,13 +20,14 @@ struct HMIState {
   int fanSpeed = 1450;
   bool heatingActive = true;
   bool modbusConnected = true;
+  char operationMode[12] = "wp"; // wp, wp_stab, stab, ext, wp_ext
   
   // Legionellen-Desinfektion
   bool disinfActive = false;
   int disinfTarget = 62;
   int disinfHold = 45;
   int disinfMaxTime = 120;
-  char disinfStatus[12] = "idle";
+  char disinfStatus[12] = "idle"; // idle, heating, holding, completed, failed
 } state;
 
 // --- Netzwerk-Objekte ---
@@ -44,6 +47,7 @@ void handleGetStatus() {
   doc["fanSpeed"] = state.fanSpeed;
   doc["heatingActive"] = state.heatingActive;
   doc["modbusConnected"] = state.modbusConnected;
+  doc["operationMode"] = state.operationMode;
   
   doc["disinfActive"] = state.disinfActive;
   doc["disinfTarget"] = state.disinfTarget;
@@ -86,7 +90,48 @@ void handlePostPower() {
   server.send(400, "application/json", "{\"status\":\"error\"}");
 }
 
-// POST /api/wifi - Ändert die WLAN SSID & das Passwort und startet das Gateway neu
+// POST /api/mode - Ändert den Betriebsmodus
+void handlePostMode() {
+  if (server.hasArg("plain")) {
+    JsonDocument doc;
+    deserializeJson(doc, server.arg("plain"));
+    if (doc.containsKey("mode")) {
+      String newMode = doc["mode"].as<String>();
+      strncpy(state.operationMode, newMode.c_str(), sizeof(state.operationMode));
+      Serial.printf("Betriebsmodus geändert: %s\n", state.operationMode);
+      server.send(200, "application/json", "{\"status\":\"ok\"}");
+      return;
+    }
+  }
+  server.send(400, "application/json", "{\"status\":\"error\"}");
+}
+
+// POST /api/disinfection - Startet/Stoppt die Legionellen-Desinfektion
+void handlePostDisinfection() {
+  if (server.hasArg("plain")) {
+    JsonDocument doc;
+    deserializeJson(doc, server.arg("plain"));
+    if (doc.containsKey("active")) {
+      state.disinfActive = doc["active"].as<bool>();
+      if (doc.containsKey("target")) state.disinfTarget = doc["target"].as<int>();
+      if (doc.containsKey("hold")) state.disinfHold = doc["hold"].as<int>();
+      if (doc.containsKey("maxTime")) state.disinfMaxTime = doc["maxTime"].as<int>();
+      
+      if (state.disinfActive) {
+        strncpy(state.disinfStatus, "heating", sizeof(state.disinfStatus));
+        Serial.println("Desinfektion aktiv: Zieltemp. " + String(state.disinfTarget) + " °C");
+      } else {
+        strncpy(state.disinfStatus, "idle", sizeof(state.disinfStatus));
+        Serial.println("Desinfektion manuell gestoppt.");
+      }
+      server.send(200, "application/json", "{\"status\":\"ok\"}");
+      return;
+    }
+  }
+  server.send(400, "application/json", "{\"status\":\"error\"}");
+}
+
+// POST /api/wifi - Ändert die WLAN SSID & das Passwort persistent und startet neu
 void handlePostWifi() {
   if (server.hasArg("plain")) {
     JsonDocument doc;
@@ -95,12 +140,18 @@ void handlePostWifi() {
       String newSsid = doc["ssid"].as<String>();
       String newPass = doc["password"].as<String>();
       
-      Serial.println("Neue WLAN-Daten erhalten. Speichere und starte neu...");
+      Serial.println("Speichere neue WLAN-Einstellungen...");
+      
+      // Speichern im Non-Volatile Storage (NVS)
+      preferences.begin("hmi-gateway", false);
+      preferences.putString("ssid", newSsid);
+      preferences.putString("password", newPass);
+      preferences.end();
+      
       server.send(200, "application/json", "{\"status\":\"rebooting\"}");
       
-      delay(1000);
-      // HINWEIS: Hier würdest du die SSID und das Passwort im EEPROM oder NVS (Non-Volatile Storage) speichern!
-      // Nach dem Neustart lädt der ESP32 die Zugangsdaten aus dem NVS.
+      delay(1500);
+      Serial.println("Starte Gateway neu...");
       ESP.restart();
       return;
     }
@@ -133,7 +184,6 @@ bool handleFileRead(String path) {
 
   String contentType = getContentType(path);
   
-  // Im Flash nach der Datei suchen
   if (LittleFS.exists(path)) {
     File file = LittleFS.open(path, "r");
     server.streamFile(file, contentType);
@@ -145,13 +195,12 @@ bool handleFileRead(String path) {
 }
 
 // --- Captive Portal Logik ---
-// Fängt alle DNS-Anfragen (wie apple.com, google.com) ab und leitet sie an das Gateway um
 void handleCaptivePortalRedirect() {
   String host = server.hostHeader();
   if (host != "192.168.4.1" && host != "hmi.local") {
     Serial.println("Captive Portal Redirect ausgelöst für: " + host);
     server.sendHeader("Location", "http://192.168.4.1/index.html", true);
-    server.send(302, "text/plain", ""); // Temporärer Redirect
+    server.send(302, "text/plain", ""); 
   } else {
     if (!handleFileRead(server.uri())) {
       server.send(404, "text/plain", "Datei nicht gefunden im LittleFS!");
@@ -170,8 +219,14 @@ void setup() {
   }
   Serial.println("LittleFS erfolgreich gemountet.");
 
-  // Access Point konfigurieren
-  WiFi.softAP(apSSID, apPassword);
+  // WLAN-Einstellungen aus dem persistenten Speicher (NVS) laden
+  preferences.begin("hmi-gateway", false);
+  apSSID = preferences.getString("ssid", "Waermepumpe-Gateway-AP");
+  apPassword = preferences.getString("password", "testpassword123");
+  preferences.end();
+
+  // Access Point starten mit geladenen Daten
+  WiFi.softAP(apSSID.c_str(), apPassword.c_str());
   IPAddress IP = WiFi.softAPIP();
   Serial.print("WLAN-AP gestartet. SSID: ");
   Serial.println(apSSID);
@@ -185,9 +240,11 @@ void setup() {
   server.on("/api/status", HTTP_GET, handleGetStatus);
   server.on("/api/setpoint", HTTP_POST, handlePostSetpoint);
   server.on("/api/power", HTTP_POST, handlePostPower);
+  server.on("/api/mode", HTTP_POST, handlePostMode);
+  server.on("/api/disinfection", HTTP_POST, handlePostDisinfection);
   server.on("/api/wifi", HTTP_POST, handlePostWifi);
 
-  // Fallback: Für alle anderen Anfragen (wird für das Captive Portal und statische Dateien verwendet)
+  // Fallback
   server.onNotFound(handleCaptivePortalRedirect);
 
   // Webserver starten
@@ -196,29 +253,37 @@ void setup() {
 }
 
 void loop() {
-  // DNS-Server-Anfragen verarbeiten
   dnsServer.processNextRequest();
-  
-  // HTTP-Client-Anfragen verarbeiten
   server.handleClient();
   
   // --- Simulierter Regler-Hintergrundprozess ---
-  // (Dieser Teil simuliert die spätere Modbus RTU Kommunikation mit der Arduino OPTA SPS)
   static unsigned long lastTick = 0;
   if (millis() - lastTick > 3000) {
     lastTick = millis();
     
     if (state.modbusConnected && state.powerOn) {
-      if (state.heatingActive) {
-        state.currentTemp += 0.1;
-        if (state.currentTemp >= state.setpoint) {
-          state.currentTemp = state.setpoint;
-          state.heatingActive = false;
+      if (state.disinfActive) {
+        // Desinfektion simulieren
+        if (strcmp(state.disinfStatus, "heating") == 0) {
+          state.currentTemp += 1.0;
+          if (state.currentTemp >= state.disinfTarget) {
+            state.currentTemp = state.disinfTarget;
+            strncpy(state.disinfStatus, "holding", sizeof(state.disinfStatus));
+          }
         }
       } else {
-        state.currentTemp -= 0.02;
-        if (state.currentTemp < state.setpoint - 1.5) {
-          state.heatingActive = true;
+        // Normalbetrieb
+        if (state.heatingActive) {
+          state.currentTemp += 0.1;
+          if (state.currentTemp >= state.setpoint) {
+            state.currentTemp = state.setpoint;
+            state.heatingActive = false;
+          }
+        } else {
+          state.currentTemp -= 0.02;
+          if (state.currentTemp < state.setpoint - 1.5) {
+            state.heatingActive = true;
+          }
         }
       }
     }
