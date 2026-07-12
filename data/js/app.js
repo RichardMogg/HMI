@@ -11,7 +11,7 @@ const state = {
   setpoint: 48.0, 
   currentTemp: 45.2, 
   evaporatorTemp: 6.4, 
-  fanSpeed: 1450, 
+  fanSpeed: 0, 
   heatingActive: true,
   modbusConnected: true,
   
