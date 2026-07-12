@@ -124,6 +124,23 @@ void handleGetStatus() {
   server.send(200, "application/json", response);
 }
 
+// --- NVS Persistence Helpers ---
+void saveRegisterToNVS(uint16_t address) {
+  preferences.begin("hmi_settings", false);
+  switch (address) {
+    case 1:     preferences.putBool("power", state.powerOn); break;
+    case 40001: preferences.putFloat("setpoint", state.setpoint); break;
+    case 40002: preferences.putInt("op-mode", state.operationMode); break;
+    case 40003: preferences.putInt("dis-target", state.disinfTarget); break;
+    case 40004: preferences.putInt("dis-hold", state.disinfHold); break;
+    case 40005: preferences.putInt("dis-maxtime", state.disinfMaxTime); break;
+    case 40006: preferences.putInt("fan-ontime", state.fanOnTime); break;
+    case 40007: preferences.putInt("fan-offtime", state.fanOffTime); break;
+    case 40008: preferences.putInt("fan-speed", state.fanTargetSpeed); break;
+  }
+  preferences.end();
+}
+
 // POST /api/setpoint - Aktualisiert den Warmwasser-Sollwert
 void handlePostSetpoint() {
   if (server.hasArg("plain")) {
@@ -132,6 +149,7 @@ void handlePostSetpoint() {
     if (doc.containsKey("setpoint")) {
       state.setpoint = doc["setpoint"].as<float>();
       Serial.printf("Neuer Sollwert empfangen: %.1f °C\n", state.setpoint);
+      saveRegisterToNVS(40001);
       server.send(200, "application/json", "{\"status\":\"ok\"}");
       return;
     }
@@ -147,6 +165,7 @@ void handlePostPower() {
     if (doc.containsKey("powerOn")) {
       state.powerOn = doc["powerOn"].as<bool>();
       Serial.printf("Anlage geschaltet: %s\n", state.powerOn ? "EIN" : "AUS");
+      saveRegisterToNVS(1);
       server.send(200, "application/json", "{\"status\":\"ok\"}");
       return;
     }
@@ -168,6 +187,7 @@ void handlePostMode() {
       else state.operationMode = 0; // Standard: wp
       
       Serial.printf("Betriebsmodus geändert: %d\n", state.operationMode);
+      saveRegisterToNVS(40002);
       server.send(200, "application/json", "{\"status\":\"ok\"}");
       return;
     }
@@ -182,9 +202,18 @@ void handlePostDisinfection() {
     deserializeJson(doc, server.arg("plain"));
     if (doc.containsKey("active")) {
       state.disinfActive = doc["active"].as<bool>();
-      if (doc.containsKey("target")) state.disinfTarget = doc["target"].as<int>();
-      if (doc.containsKey("hold")) state.disinfHold = doc["hold"].as<int>();
-      if (doc.containsKey("maxTime")) state.disinfMaxTime = doc["maxTime"].as<int>();
+      if (doc.containsKey("target")) {
+        state.disinfTarget = doc["target"].as<int>();
+        saveRegisterToNVS(40003);
+      }
+      if (doc.containsKey("hold")) {
+        state.disinfHold = doc["hold"].as<int>();
+        saveRegisterToNVS(40004);
+      }
+      if (doc.containsKey("maxTime")) {
+        state.disinfMaxTime = doc["maxTime"].as<int>();
+        saveRegisterToNVS(40005);
+      }
       
       if (state.disinfActive) {
         strncpy(state.disinfStatus, "heating", sizeof(state.disinfStatus));
@@ -211,6 +240,9 @@ void handlePostFan() {
       state.fanTargetSpeed = doc["targetSpeed"].as<int>();
       Serial.printf("Lüfter-Einstellungen geändert: Ein=%d min, Pause=%d min, Soll-Speed=%d\n", 
                     state.fanOnTime, state.fanOffTime, state.fanTargetSpeed);
+      saveRegisterToNVS(40006);
+      saveRegisterToNVS(40007);
+      saveRegisterToNVS(40008);
       server.send(200, "application/json", "{\"status\":\"ok\"}");
       return;
     }
@@ -341,6 +373,7 @@ void syncModbusRegisters() {
           *(bool*)reg.varPtr = (mbVal == 1);
         }
         reg.lastValue = mbVal;
+        saveRegisterToNVS(reg.address);
       } else if (currentLocalVal != reg.lastValue) {
         // Web-API/HMI hat Wert überschrieben
         mb.Coil(reg.address, currentLocalVal == 1);
@@ -360,6 +393,7 @@ void syncModbusRegisters() {
           *(float*)reg.varPtr = (float)mbVal / reg.scale;
         }
         reg.lastValue = mbVal;
+        saveRegisterToNVS(reg.address);
       } else if (currentLocalVal != reg.lastValue) {
         // Web-API/HMI hat Wert überschrieben
         mb.Hreg(reg.address, currentLocalVal);
@@ -403,6 +437,19 @@ void setup() {
   apSSID = preferences.getString("ssid", "Waermepumpe-Gateway-AP");
   apPassword = preferences.getString("password", "testpassword123");
   state.modbusAddress = preferences.getInt("mb-addr", 1);
+  preferences.end();
+
+  // HMI-Parametereinstellungen aus NVS laden
+  preferences.begin("hmi_settings", true);
+  state.powerOn = preferences.getBool("power", true);
+  state.setpoint = preferences.getFloat("setpoint", 48.0);
+  state.operationMode = preferences.getInt("op-mode", 0);
+  state.disinfTarget = preferences.getInt("dis-target", 62);
+  state.disinfHold = preferences.getInt("dis-hold", 45);
+  state.disinfMaxTime = preferences.getInt("dis-maxtime", 120);
+  state.fanOnTime = preferences.getInt("fan-ontime", 15);
+  state.fanOffTime = preferences.getInt("fan-offtime", 45);
+  state.fanTargetSpeed = preferences.getInt("fan-speed", 1);
   preferences.end();
 
   // Access Point starten
