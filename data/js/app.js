@@ -39,6 +39,7 @@ const state = {
   // Lüftersteuerungs-Intervalle
   fanOnTime: 15,
   fanOffTime: 45,
+  fanTargetSpeed: 1,
 };
 
 // Config Constants
@@ -120,6 +121,7 @@ const UI = {
   // Fan controls
   inputFanOnTime: document.getElementById('fan-on-time'),
   inputFanOffTime: document.getElementById('fan-off-time'),
+  inputFanTargetSpeed: document.getElementById('fan-target-speed'),
   btnSaveFan: document.getElementById('btn-save-fan')
 };
 
@@ -215,6 +217,7 @@ function fetchStatus() {
       state.modbusAddress = data.modbusAddress || 1;
       state.fanOnTime = data.fanOnTime || 15;
       state.fanOffTime = data.fanOffTime || 45;
+      state.fanTargetSpeed = data.fanTargetSpeed || 1;
       
       updateDOM();
     })
@@ -309,7 +312,7 @@ const modbusRegisters = [
   { address: 2, type: 'Coil', datatype: 'Bool', desc: 'Legionellen-Desinfektion', scale: '1:1', key: 'disinfActive' },
   { address: 30001, type: 'Input', datatype: 'Float', desc: 'Warmwasser-Isttemperatur', scale: '1:10', key: 'currentTemp', unit: '°C' },
   { address: 30002, type: 'Input', datatype: 'Float', desc: 'Verdampfertemperatur', scale: '1:10', key: 'evaporatorTemp', unit: '°C' },
-  { address: 30003, type: 'Input', datatype: 'Int', desc: 'Lüfterdrehzahl', scale: '1:1', key: 'fanSpeed', unit: ' U/min' },
+  { address: 30003, type: 'Input', datatype: 'Int', desc: 'Lüfter-Status', scale: '1:1', key: 'fanSpeed' },
   { address: 30004, type: 'Input', datatype: 'Bool', desc: 'Zusatzheizung Status (Heizstab)', scale: '1:1', key: 'heatingActive' },
   { address: 40001, type: 'Holding', datatype: 'Float', desc: 'Warmwasser-Sollwert', scale: '1:10', key: 'setpoint', unit: '°C' },
   { address: 40002, type: 'Holding', datatype: 'Int', desc: 'Betriebsmodus', scale: '1:1', key: 'operationMode' },
@@ -317,7 +320,8 @@ const modbusRegisters = [
   { address: 40004, type: 'Holding', datatype: 'Int', desc: 'Desinfektion: Haltedauer', scale: '1:1', key: 'disinfHold', unit: ' Min' },
   { address: 40005, type: 'Holding', datatype: 'Int', desc: 'Desinfektion: Max. Aufheizzeit', scale: '1:1', key: 'disinfMaxTime', unit: ' Min' },
   { address: 40006, type: 'Holding', datatype: 'Int', desc: 'Lüfter: Einschaltzeit', scale: '1:1', key: 'fanOnTime', unit: ' Min' },
-  { address: 40007, type: 'Holding', datatype: 'Int', desc: 'Lüfter: Pausezeit', scale: '1:1', key: 'fanOffTime', unit: ' Min' }
+  { address: 40007, type: 'Holding', datatype: 'Int', desc: 'Lüfter: Pausezeit', scale: '1:1', key: 'fanOffTime', unit: ' Min' },
+  { address: 40008, type: 'Holding', datatype: 'Int', desc: 'Lüfter: Solldrehzahl', scale: '1:1', key: 'fanTargetSpeed' }
 ];
 
 function updateModbusRegisterTable() {
@@ -336,6 +340,17 @@ function updateModbusRegisterTable() {
         case 3: formattedVal = 'Extern (ext / 3)'; break;
         case 4: formattedVal = 'WP + Extern (wp_ext / 4)'; break;
         default: formattedVal = 'Eco (wp / 0)'; break;
+      }
+    } else if (reg.key === 'fanSpeed') {
+      switch (rawVal) {
+        case 1: formattedVal = 'Niedrig (1)'; break;
+        case 2: formattedVal = 'Hoch (2)'; break;
+        default: formattedVal = 'Aus (0)'; break;
+      }
+    } else if (reg.key === 'fanTargetSpeed') {
+      switch (rawVal) {
+        case 2: formattedVal = 'Hoch (2)'; break;
+        default: formattedVal = 'Niedrig (1)'; break;
       }
     } else if (reg.datatype === 'Bool') {
       formattedVal = rawVal ? 'AN (1)' : 'AUS (0)';
@@ -406,7 +421,10 @@ function updateDOM() {
   } else {
     UI.valIstTemp.innerHTML = `${state.currentTemp.toFixed(1)} <span class="unit">°C</span>`;
     UI.valEvapTemp.innerHTML = `${state.evaporatorTemp.toFixed(1)} <span class="unit">°C</span>`;
-    UI.valFanSpeed.innerHTML = `${state.fanSpeed} <span class="unit">U/min</span>`;
+    let fanStatusText = 'Aus';
+    if (state.fanSpeed === 1) fanStatusText = 'Niedrig';
+    else if (state.fanSpeed === 2) fanStatusText = 'Hoch';
+    UI.valFanSpeed.innerHTML = fanStatusText;
     
     if (state.heatingActive) {
       const isStab = state.operationMode === 'stab' || state.operationMode === 'wp_stab' && state.currentTemp < 40;
@@ -427,9 +445,10 @@ function updateDOM() {
   UI.inputDisinfHold.value = state.disinfHold;
   UI.inputDisinfMaxTime.value = state.disinfMaxTime;
   
-  if (UI.inputFanOnTime && UI.inputFanOffTime) {
+  if (UI.inputFanOnTime && UI.inputFanOffTime && UI.inputFanTargetSpeed) {
     UI.inputFanOnTime.value = state.fanOnTime;
     UI.inputFanOffTime.value = state.fanOffTime;
+    UI.inputFanTargetSpeed.value = state.fanTargetSpeed;
   }
   
   if (state.disinfActive) {
@@ -552,7 +571,7 @@ function runSimulationTick() {
     if (state.heatingActive) {
       state.currentTemp += 0.08;
       if (state.currentTemp > state.setpoint) state.currentTemp = state.setpoint;
-      state.fanSpeed = 1450 + Math.floor(Math.random() * 40 - 20);
+      state.fanSpeed = state.fanTargetSpeed;
       state.evaporatorTemp = Math.max(-5.0, state.evaporatorTemp - 0.2);
     } else {
       state.currentTemp -= 0.02;
@@ -829,19 +848,22 @@ function initEvents() {
     UI.btnSaveFan.addEventListener('click', () => {
       const onTime = parseInt(UI.inputFanOnTime.value);
       const offTime = parseInt(UI.inputFanOffTime.value);
+      const targetSpeed = parseInt(UI.inputFanTargetSpeed.value);
       
-      if (onTime >= 1 && onTime <= 1440 && offTime >= 1 && offTime <= 1440) {
+      if (onTime >= 1 && onTime <= 1440 && offTime >= 1 && offTime <= 1440 && (targetSpeed === 1 || targetSpeed === 2)) {
         if (useLocalSimulation) {
           state.fanOnTime = onTime;
           state.fanOffTime = offTime;
+          state.fanTargetSpeed = targetSpeed;
           showToast('Lüfter-Intervalle in Simulation geändert.', 'success');
           updateDOM();
         } else {
-          postData('/api/fan', { onTime: onTime, offTime: offTime })
+          postData('/api/fan', { onTime: onTime, offTime: offTime, targetSpeed: targetSpeed })
             .then(res => {
               if (res && res.status === 'ok') {
                 state.fanOnTime = onTime;
                 state.fanOffTime = offTime;
+                state.fanTargetSpeed = targetSpeed;
                 showToast('Lüfter-Intervalle erfolgreich gespeichert.', 'success');
                 updateDOM();
               }
@@ -850,6 +872,7 @@ function initEvents() {
       } else {
         UI.inputFanOnTime.value = state.fanOnTime;
         UI.inputFanOffTime.value = state.fanOffTime;
+        UI.inputFanTargetSpeed.value = state.fanTargetSpeed;
         showToast('Ungültige Zeitangaben (1 - 1440 Minuten).', 'error');
       }
     });

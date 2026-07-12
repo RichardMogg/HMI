@@ -29,7 +29,7 @@ struct HMIState {
   float setpoint = 48.0;
   float currentTemp = 45.2;
   float evaporatorTemp = 6.4;
-  int fanSpeed = 1450;
+  int fanSpeed = 0; // 0 = Aus, 1 = Niedrig, 2 = Hoch
   bool heatingActive = true;
   bool modbusConnected = true;
   int operationMode = 0; // 0=wp, 1=wp_stab, 2=stab, 3=ext, 4=wp_ext
@@ -45,6 +45,7 @@ struct HMIState {
   // Lüftersteuerung
   int fanOnTime = 15;
   int fanOffTime = 45;
+  int fanTargetSpeed = 1; // 1 = Niedrig, 2 = Hoch
 } state;
 
 // --- Tabellenbasierte Register-Struktur (Service-Schicht) ---
@@ -75,7 +76,8 @@ ModbusRegister regTable[] = {
   { 40004, TYPE_HREG, VAL_INT,   &state.disinfHold,     1.0,  0 },
   { 40005, TYPE_HREG, VAL_INT,   &state.disinfMaxTime,  1.0,  0 },
   { 40006, TYPE_HREG, VAL_INT,   &state.fanOnTime,      1.0,  0 },
-  { 40007, TYPE_HREG, VAL_INT,   &state.fanOffTime,     1.0,  0 }
+  { 40007, TYPE_HREG, VAL_INT,   &state.fanOffTime,     1.0,  0 },
+  { 40008, TYPE_HREG, VAL_INT,   &state.fanTargetSpeed, 1.0,  0 }
 };
 
 const int NUM_REGISTERS = sizeof(regTable) / sizeof(ModbusRegister);
@@ -100,6 +102,7 @@ void handleGetStatus() {
   doc["modbusAddress"] = state.modbusAddress;
   doc["fanOnTime"] = state.fanOnTime;
   doc["fanOffTime"] = state.fanOffTime;
+  doc["fanTargetSpeed"] = state.fanTargetSpeed;
   
   // Konvertiere numerischen Betriebsmodus in String für das HMI
   switch (state.operationMode) {
@@ -202,10 +205,12 @@ void handlePostFan() {
   if (server.hasArg("plain")) {
     JsonDocument doc;
     deserializeJson(doc, server.arg("plain"));
-    if (doc.containsKey("onTime") && doc.containsKey("offTime")) {
+    if (doc.containsKey("onTime") && doc.containsKey("offTime") && doc.containsKey("targetSpeed")) {
       state.fanOnTime = doc["onTime"].as<int>();
       state.fanOffTime = doc["offTime"].as<int>();
-      Serial.printf("Lüfter-Intervalle geändert: Ein=%d min, Pause=%d min\n", state.fanOnTime, state.fanOffTime);
+      state.fanTargetSpeed = doc["targetSpeed"].as<int>();
+      Serial.printf("Lüfter-Einstellungen geändert: Ein=%d min, Pause=%d min, Soll-Speed=%d\n", 
+                    state.fanOnTime, state.fanOffTime, state.fanTargetSpeed);
       server.send(200, "application/json", "{\"status\":\"ok\"}");
       return;
     }

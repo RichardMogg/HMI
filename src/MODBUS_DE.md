@@ -45,7 +45,7 @@ Der ESP32 arbeitet als **Modbus-Slave (Server)**. Die standardmäßige Slave-ID 
 | **2** (Coil) | Read-Write | Boolean | 1:1 | **Legionellen-Desinfektion**<br>0 = Inaktiv, 1 = Aktiviert | 0 oder 1 |
 | **30001** (Input Reg) | Read-Only | Float | **10.0** | **Warmwasser-Isttemperatur**<br>Übertragen als Ganzzahl ($Wert \times 10$) | 5.0 °C bis 80.0 °C<br>(50 bis 800) |
 | **30002** (Input Reg) | Read-Only | Float | **10.0** | **Verdampfertemperatur**<br>Übertragen als Ganzzahl ($Wert \times 10$) | -20.0 °C bis 50.0 °C<br>(-200 bis 500) |
-| **30003** (Input Reg) | Read-Only | Integer | 1:1 | **Lüfterdrehzahl** in Umdrehungen pro Minute | 0 bis 3000 U/min |
+| **30003** (Input Reg) | Read-Only | Integer | 1:1 | **Lüfter-Status**<br>0 = Aus, 1 = Niedrig, 2 = Hoch | 0 bis 2 |
 | **30004** (Input Reg) | Read-Only | Boolean | 1:1 | **Zusatzheizung Status (Heizstab)**<br>0 = Aus, 1 = Aktiviert | 0 oder 1 |
 | **40001** (Holding Reg) | Read-Write | Float | **10.0** | **Warmwasser-Sollwert**<br>Übertragen als Ganzzahl ($Wert \times 10$) | 5.0 °C bis 60.0 °C<br>(50 bis 600) |
 | **40002** (Holding Reg) | Read-Write | Integer | 1:1 | **Betriebsmodus**<br>0 = Eco (WP)<br>1 = Hybrid (WP+Heizstab)<br>2 = Notbetrieb (Heizstab)<br>3 = Extern (Gas/Holz)<br>4 = WP + Extern | 0 bis 4 |
@@ -54,6 +54,7 @@ Der ESP32 arbeitet als **Modbus-Slave (Server)**. Die standardmäßige Slave-ID 
 | **40005** (Holding Reg) | Read-Write | Integer | 1:1 | **Desinfektion: Maximale Aufheizzeit** in Min. | 60 bis 360 Min |
 | **40006** (Holding Reg) | Read-Write | Integer | 1:1 | **Lüfter: Einschaltzeit** in Minuten | 1 bis 1440 Min |
 | **40007** (Holding Reg) | Read-Write | Integer | 1:1 | **Lüfter: Pausezeit** in Minuten | 1 bis 1440 Min |
+| **40008** (Holding Reg) | Read-Write | Integer | 1:1 | **Lüfter: Solldrehzahl**<br>1 = Niedrig, 2 = Hoch | 1 oder 2 |
 
 ---
 
