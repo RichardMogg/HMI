@@ -239,6 +239,26 @@ function fetchStatus() {
     });
 }
 
+let docLoaded = false;
+function loadDocumentation() {
+  if (docLoaded) return;
+  const container = document.getElementById('doc-container');
+  if (!container) return;
+  
+  fetch('MODBUS_DE.md')
+    .then(res => {
+      if (!res.ok) throw new Error('Dokumentation konnte nicht geladen werden.');
+      return res.text();
+    })
+    .then(text => {
+      container.textContent = text;
+      docLoaded = true;
+    })
+    .catch(err => {
+      container.innerHTML = `<span style="color: var(--color-error);">${err.message}</span>`;
+    });
+}
+
 // --- Routing (Single Page App) ---
 function navigateTo(sectionId) {
   Object.keys(UI.sections).forEach(key => {
@@ -262,6 +282,10 @@ function navigateTo(sectionId) {
     UI.inputSsid.value = state.wifiSsid;
     UI.inputPass.value = '';
     UI.inputPassConfirm.value = '';
+  }
+  
+  if (sectionId === 'service') {
+    loadDocumentation();
   }
   
   window.scrollTo(0, 0);

@@ -278,6 +278,7 @@ String getContentType(String filename) {
   if (filename.endsWith(".ico")) return "image/x-icon";
   if (filename.endsWith(".png")) return "image/png";
   if (filename.endsWith(".svg")) return "image/svg+xml";
+  if (filename.endsWith(".md")) return "text/markdown; charset=utf-8";
   return "text/plain";
 }
 

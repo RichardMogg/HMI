@@ -129,3 +129,14 @@ Um die Übersichtlichkeit auf Smartphones zu wahren, sind alle Kacheln in den **
 * Ein Klick auf die Kopfzeile klappt den Inhalt der Kachel ein oder aus.
 * Die Klasse `.collapsible` steuert dieses Verhalten CSS-seitig und blendet den Inhalt (`.card-content`) sanft aus oder ein, während der Chevron rotiert.
 
+---
+
+## 7. WLAN Access-Point & Standard-Zugangsdaten
+
+Das Gateway spannt bei Inbetriebnahme oder nach einem Reset ein eigenes verschlüsseltes WLAN-Netzwerk auf.
+
+* **Standard-SSID:** `Waermepumpe-Gateway-AP`
+* **Standard-Passwort:** `testpassword123`
+* **Standard-IP-Adresse:** `192.168.4.1` (oder mDNS: `http://hmi.local/`)
+
+Die Zugangsdaten können im Web-HMI unter den Einstellungen geändert werden. Nach dem Speichern startet das Gateway neu und speichert die Daten im persistenten Flash-Speicher (`Preferences`).
