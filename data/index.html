@@ -306,6 +306,26 @@
             <div class="card-footer">Hinweis: Desinfektion deaktiviert den Standard-Eco-Modus während des Heizens.</div>
           </div>
 
+          <!-- Card: Lüftersteuerung -->
+          <div class="card">
+            <h3 class="card-title">Lüftersteuerung</h3>
+            <p style="font-size: 0.875rem; color: var(--text-muted); line-height: 1.4; margin-top: -6px;">
+              Zeitintervalle für die zyklische Belüftung (Einschaltzeit und Pausezeit in Minuten).
+            </p>
+            <div class="disinfection-controls-grid" style="margin-top: 8px;">
+              <div class="form-group">
+                <label for="fan-on-time">Einschaltzeit (Minuten)</label>
+                <input type="number" id="fan-on-time" class="input-control" min="1" max="1440" value="15">
+              </div>
+              <div class="form-group">
+                <label for="fan-off-time">Pausezeit (Minuten)</label>
+                <input type="number" id="fan-off-time" class="input-control" min="1" max="1440" value="45">
+              </div>
+            </div>
+            <button id="btn-save-fan" class="btn-primary" style="margin-top: 12px; width: 100%;">Einstellungen speichern</button>
+            <div class="card-footer">Werte werden direkt an die SPS übertragen (Holding-Register 40006 und 40007).</div>
+          </div>
+
           <!-- Card: WLAN Access Point -->
           <div class="card">
             <h3 class="card-title">Lokales WLAN-Netzwerk</h3>

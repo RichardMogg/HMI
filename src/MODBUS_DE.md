@@ -52,6 +52,8 @@ Der ESP32 arbeitet als **Modbus-Slave (Server)**. Die standardmäßige Slave-ID 
 | **40003** (Holding Reg) | Read-Write | Integer | 1:1 | **Desinfektions-Zieltemperatur** in °C | 60 bis 70 °C |
 | **40004** (Holding Reg) | Read-Write | Integer | 1:1 | **Desinfektions-Haltedauer** in Minuten | 30 bis 180 Min |
 | **40005** (Holding Reg) | Read-Write | Integer | 1:1 | **Desinfektion: Maximale Aufheizzeit** in Min. | 60 bis 360 Min |
+| **40006** (Holding Reg) | Read-Write | Integer | 1:1 | **Lüfter: Einschaltzeit** in Minuten | 1 bis 1440 Min |
+| **40007** (Holding Reg) | Read-Write | Integer | 1:1 | **Lüfter: Pausezeit** in Minuten | 1 bis 1440 Min |
 
 ---
 

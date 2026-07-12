@@ -41,6 +41,10 @@ struct HMIState {
   int disinfHold = 45;
   int disinfMaxTime = 120;
   char disinfStatus[12] = "idle"; // idle, heating, holding, completed, failed
+  
+  // Lüftersteuerung
+  int fanOnTime = 15;
+  int fanOffTime = 45;
 } state;
 
 // --- Tabellenbasierte Register-Struktur (Service-Schicht) ---
@@ -69,7 +73,9 @@ ModbusRegister regTable[] = {
   { 40002, TYPE_HREG, VAL_INT,   &state.operationMode,  1.0,  0 },
   { 40003, TYPE_HREG, VAL_INT,   &state.disinfTarget,   1.0,  0 },
   { 40004, TYPE_HREG, VAL_INT,   &state.disinfHold,     1.0,  0 },
-  { 40005, TYPE_HREG, VAL_INT,   &state.disinfMaxTime,  1.0,  0 }
+  { 40005, TYPE_HREG, VAL_INT,   &state.disinfMaxTime,  1.0,  0 },
+  { 40006, TYPE_HREG, VAL_INT,   &state.fanOnTime,      1.0,  0 },
+  { 40007, TYPE_HREG, VAL_INT,   &state.fanOffTime,     1.0,  0 }
 };
 
 const int NUM_REGISTERS = sizeof(regTable) / sizeof(ModbusRegister);
@@ -92,6 +98,8 @@ void handleGetStatus() {
   doc["heatingActive"] = state.heatingActive;
   doc["modbusConnected"] = state.modbusConnected;
   doc["modbusAddress"] = state.modbusAddress;
+  doc["fanOnTime"] = state.fanOnTime;
+  doc["fanOffTime"] = state.fanOffTime;
   
   // Konvertiere numerischen Betriebsmodus in String für das HMI
   switch (state.operationMode) {
@@ -182,6 +190,22 @@ void handlePostDisinfection() {
         strncpy(state.disinfStatus, "idle", sizeof(state.disinfStatus));
         Serial.println("Desinfektion manuell gestoppt.");
       }
+      server.send(200, "application/json", "{\"status\":\"ok\"}");
+      return;
+    }
+  }
+  server.send(400, "application/json", "{\"status\":\"error\"}");
+}
+
+// POST /api/fan - Aktualisiert die Lüfter-Intervalle
+void handlePostFan() {
+  if (server.hasArg("plain")) {
+    JsonDocument doc;
+    deserializeJson(doc, server.arg("plain"));
+    if (doc.containsKey("onTime") && doc.containsKey("offTime")) {
+      state.fanOnTime = doc["onTime"].as<int>();
+      state.fanOffTime = doc["offTime"].as<int>();
+      Serial.printf("Lüfter-Intervalle geändert: Ein=%d min, Pause=%d min\n", state.fanOnTime, state.fanOffTime);
       server.send(200, "application/json", "{\"status\":\"ok\"}");
       return;
     }
@@ -393,6 +417,7 @@ void setup() {
   server.on("/api/power", HTTP_POST, handlePostPower);
   server.on("/api/mode", HTTP_POST, handlePostMode);
   server.on("/api/disinfection", HTTP_POST, handlePostDisinfection);
+  server.on("/api/fan", HTTP_POST, handlePostFan);
   server.on("/api/modbus", HTTP_POST, handlePostModbus);
   server.on("/api/wifi", HTTP_POST, handlePostWifi);
 

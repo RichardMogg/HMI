@@ -35,6 +35,10 @@ const state = {
   
   // Service-Ebene freigeschaltet
   serviceUnlocked: false,
+  
+  // Lüftersteuerungs-Intervalle
+  fanOnTime: 15,
+  fanOffTime: 45,
 };
 
 // Config Constants
@@ -111,7 +115,12 @@ const UI = {
   rebootModal: document.getElementById('reboot-modal'),
   rebootCountdown: document.getElementById('reboot-countdown'),
   drawerTitle: document.getElementById('drawer-title'),
-  menuItemService: document.getElementById('menu-item-service')
+  menuItemService: document.getElementById('menu-item-service'),
+  
+  // Fan controls
+  inputFanOnTime: document.getElementById('fan-on-time'),
+  inputFanOffTime: document.getElementById('fan-off-time'),
+  btnSaveFan: document.getElementById('btn-save-fan')
 };
 
 // --- Toast / Benachrichtigungssystem ---
@@ -204,6 +213,8 @@ function fetchStatus() {
       state.disinfMaxTime = data.disinfMaxTime;
       state.disinfStatus = data.disinfStatus;
       state.modbusAddress = data.modbusAddress || 1;
+      state.fanOnTime = data.fanOnTime || 15;
+      state.fanOffTime = data.fanOffTime || 45;
       
       updateDOM();
     })
@@ -304,7 +315,9 @@ const modbusRegisters = [
   { address: 40002, type: 'Holding', datatype: 'Int', desc: 'Betriebsmodus', scale: '1:1', key: 'operationMode' },
   { address: 40003, type: 'Holding', datatype: 'Int', desc: 'Desinfektion: Zieltemperatur', scale: '1:1', key: 'disinfTarget', unit: '°C' },
   { address: 40004, type: 'Holding', datatype: 'Int', desc: 'Desinfektion: Haltedauer', scale: '1:1', key: 'disinfHold', unit: ' Min' },
-  { address: 40005, type: 'Holding', datatype: 'Int', desc: 'Desinfektion: Max. Aufheizzeit', scale: '1:1', key: 'disinfMaxTime', unit: ' Min' }
+  { address: 40005, type: 'Holding', datatype: 'Int', desc: 'Desinfektion: Max. Aufheizzeit', scale: '1:1', key: 'disinfMaxTime', unit: ' Min' },
+  { address: 40006, type: 'Holding', datatype: 'Int', desc: 'Lüfter: Einschaltzeit', scale: '1:1', key: 'fanOnTime', unit: ' Min' },
+  { address: 40007, type: 'Holding', datatype: 'Int', desc: 'Lüfter: Pausezeit', scale: '1:1', key: 'fanOffTime', unit: ' Min' }
 ];
 
 function updateModbusRegisterTable() {
@@ -413,6 +426,11 @@ function updateDOM() {
   UI.inputDisinfTarget.value = state.disinfTarget;
   UI.inputDisinfHold.value = state.disinfHold;
   UI.inputDisinfMaxTime.value = state.disinfMaxTime;
+  
+  if (UI.inputFanOnTime && UI.inputFanOffTime) {
+    UI.inputFanOnTime.value = state.fanOnTime;
+    UI.inputFanOffTime.value = state.fanOffTime;
+  }
   
   if (state.disinfActive) {
     UI.disinfStatusBadge.className = `badge badge-${state.disinfStatus === 'failed' ? 'error' : 'warning'}`;
@@ -802,6 +820,37 @@ function initEvents() {
       } else {
         UI.inputModbusAddress.value = state.modbusAddress;
         showToast('Ungültige Adresse (1 - 247 zulässig).', 'error');
+      }
+    });
+  }
+  
+  // Settings Screen: Fan Intervals Save Handler
+  if (UI.btnSaveFan) {
+    UI.btnSaveFan.addEventListener('click', () => {
+      const onTime = parseInt(UI.inputFanOnTime.value);
+      const offTime = parseInt(UI.inputFanOffTime.value);
+      
+      if (onTime >= 1 && onTime <= 1440 && offTime >= 1 && offTime <= 1440) {
+        if (useLocalSimulation) {
+          state.fanOnTime = onTime;
+          state.fanOffTime = offTime;
+          showToast('Lüfter-Intervalle in Simulation geändert.', 'success');
+          updateDOM();
+        } else {
+          postData('/api/fan', { onTime: onTime, offTime: offTime })
+            .then(res => {
+              if (res && res.status === 'ok') {
+                state.fanOnTime = onTime;
+                state.fanOffTime = offTime;
+                showToast('Lüfter-Intervalle erfolgreich gespeichert.', 'success');
+                updateDOM();
+              }
+            });
+        }
+      } else {
+        UI.inputFanOnTime.value = state.fanOnTime;
+        UI.inputFanOffTime.value = state.fanOffTime;
+        showToast('Ungültige Zeitangaben (1 - 1440 Minuten).', 'error');
       }
     });
   }
