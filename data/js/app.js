@@ -465,14 +465,14 @@ function updateDOM() {
   UI.optOpMode.value = state.operationMode;
   UI.disinfToggle.checked = state.disinfActive;
   
-  UI.inputDisinfTarget.value = state.disinfTarget;
-  UI.inputDisinfHold.value = state.disinfHold;
-  UI.inputDisinfMaxTime.value = state.disinfMaxTime;
+  if (document.activeElement !== UI.inputDisinfTarget) UI.inputDisinfTarget.value = state.disinfTarget;
+  if (document.activeElement !== UI.inputDisinfHold) UI.inputDisinfHold.value = state.disinfHold;
+  if (document.activeElement !== UI.inputDisinfMaxTime) UI.inputDisinfMaxTime.value = state.disinfMaxTime;
   
   if (UI.inputFanOnTime && UI.inputFanOffTime && UI.inputFanTargetSpeed) {
-    UI.inputFanOnTime.value = state.fanOnTime;
-    UI.inputFanOffTime.value = state.fanOffTime;
-    UI.inputFanTargetSpeed.value = state.fanTargetSpeed;
+    if (document.activeElement !== UI.inputFanOnTime) UI.inputFanOnTime.value = state.fanOnTime;
+    if (document.activeElement !== UI.inputFanOffTime) UI.inputFanOffTime.value = state.fanOffTime;
+    if (document.activeElement !== UI.inputFanTargetSpeed) UI.inputFanTargetSpeed.value = state.fanTargetSpeed;
   }
   
   if (state.disinfActive) {
@@ -501,7 +501,7 @@ function updateDOM() {
     UI.disinfCurrentMetrics.style.display = 'none';
   }
   
-  if (UI.inputModbusAddress) {
+  if (UI.inputModbusAddress && document.activeElement !== UI.inputModbusAddress) {
     UI.inputModbusAddress.value = state.modbusAddress;
   }
   
