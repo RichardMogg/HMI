@@ -197,7 +197,7 @@ void handlePostModbus() {
     if (doc.containsKey("address")) {
       state.modbusAddress = doc["address"].as<int>();
       
-      preferences.begin("hmi-gateway", false);
+      preferences.begin("hmi_gateway", false);
       preferences.putInt("mb-addr", state.modbusAddress);
       preferences.end();
       
@@ -223,7 +223,7 @@ void handlePostWifi() {
       
       Serial.println("Speichere neue WLAN-Einstellungen...");
       
-      preferences.begin("hmi-gateway", false);
+      preferences.begin("hmi_gateway", false);
       preferences.putString("ssid", newSsid);
       preferences.putString("password", newPass);
       preferences.end();
@@ -351,7 +351,7 @@ void setup() {
   Serial.println("LittleFS erfolgreich gemountet.");
 
   // WLAN-Einstellungen & Modbus-Adresse aus NVS laden
-  preferences.begin("hmi-gateway", false);
+  preferences.begin("hmi_gateway", false);
   apSSID = preferences.getString("ssid", "Waermepumpe-Gateway-AP");
   apPassword = preferences.getString("password", "testpassword123");
   state.modbusAddress = preferences.getInt("mb-addr", 1);

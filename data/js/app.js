@@ -332,11 +332,15 @@ function updateModbusRegisterTable() {
       formattedVal = rawVal;
     }
     
+    const access = (reg.type === 'Input') ? 'R' : 'R/W';
+    const accessBadgeClass = (access === 'R') ? 'badge-inactive' : 'badge-success';
+    
     html += `
       <tr>
         <td style="font-weight: 700; color: var(--color-primary-hover); font-family: monospace;">${reg.address}</td>
         <td style="font-weight: 500;">${reg.desc}</td>
         <td><span class="badge ${reg.type === 'Coil' ? 'badge-success' : reg.type === 'Holding' ? 'badge-warning' : 'badge-inactive'}" style="transform: scale(0.9); font-size: 0.7rem;">${reg.type}</span></td>
+        <td><span class="badge ${accessBadgeClass}" style="transform: scale(0.9); font-size: 0.7rem; font-weight: 700;">${access}</span></td>
         <td style="color: var(--text-muted); font-family: monospace;">${reg.scale}</td>
         <td style="text-align: right; font-weight: 700; color: var(--text-active); font-family: monospace;">${formattedVal}</td>
       </tr>
@@ -781,13 +785,20 @@ function initEvents() {
     UI.btnSaveModbus.addEventListener('click', () => {
       const addr = parseInt(UI.inputModbusAddress.value);
       if (addr >= 1 && addr <= 247) {
-        postData('/api/modbus', { address: addr })
-          .then(res => {
-            if (res && res.status === 'ok') {
-              state.modbusAddress = addr;
-              showToast('Modbus-Adresse erfolgreich gespeichert.', 'success');
-            }
-          });
+        if (useLocalSimulation) {
+          state.modbusAddress = addr;
+          showToast('Modbus-Adresse in Simulation geändert.', 'success');
+          updateDOM();
+        } else {
+          postData('/api/modbus', { address: addr })
+            .then(res => {
+              if (res && res.status === 'ok') {
+                state.modbusAddress = addr;
+                showToast('Modbus-Adresse erfolgreich gespeichert.', 'success');
+                updateDOM();
+              }
+            });
+        }
       } else {
         UI.inputModbusAddress.value = state.modbusAddress;
         showToast('Ungültige Adresse (1 - 247 zulässig).', 'error');
