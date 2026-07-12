@@ -42,6 +42,22 @@ const state = {
   fanTargetSpeed: 1,
 };
 
+// --- Form Dirty/Edit State ---
+const formState = {
+  fan: {
+    dirty: false,
+    lastEditTime: 0
+  },
+  disinf: {
+    dirty: false,
+    lastEditTime: 0
+  },
+  modbus: {
+    dirty: false,
+    lastEditTime: 0
+  }
+};
+
 // Config Constants
 const TEMP_MIN = 5.0;
 const TEMP_MAX = 60.0;
@@ -210,14 +226,33 @@ function fetchStatus() {
       state.modbusConnected = data.modbusConnected;
       
       state.disinfActive = data.disinfActive;
-      state.disinfTarget = data.disinfTarget;
-      state.disinfHold = data.disinfHold;
-      state.disinfMaxTime = data.disinfMaxTime;
       state.disinfStatus = data.disinfStatus;
-      state.modbusAddress = data.modbusAddress || 1;
-      state.fanOnTime = data.fanOnTime || 15;
-      state.fanOffTime = data.fanOffTime || 45;
-      state.fanTargetSpeed = data.fanTargetSpeed || 1;
+      
+      // Update disinfection target values only if not dirty (unsaved edits)
+      if (!formState.disinf.dirty) {
+        state.disinfTarget = data.disinfTarget;
+        state.disinfHold = data.disinfHold;
+        state.disinfMaxTime = data.disinfMaxTime;
+      } else if (Date.now() - formState.disinf.lastEditTime > 60000) {
+        // Discard unsaved changes after 1 minute of inactivity
+        formState.disinf.dirty = false;
+      }
+      
+      // Update modbus address only if not dirty
+      if (!formState.modbus.dirty) {
+        state.modbusAddress = data.modbusAddress || 1;
+      } else if (Date.now() - formState.modbus.lastEditTime > 60000) {
+        formState.modbus.dirty = false;
+      }
+      
+      // Update fan settings only if not dirty
+      if (!formState.fan.dirty) {
+        state.fanOnTime = data.fanOnTime || 15;
+        state.fanOffTime = data.fanOffTime || 45;
+        state.fanTargetSpeed = data.fanTargetSpeed || 1;
+      } else if (Date.now() - formState.fan.lastEditTime > 60000) {
+        formState.fan.dirty = false;
+      }
       
       updateDOM();
     })
@@ -261,6 +296,11 @@ function loadDocumentation() {
 
 // --- Routing (Single Page App) ---
 function navigateTo(sectionId) {
+  // Reset dirty settings when changing pages (discards unsaved changes)
+  formState.fan.dirty = false;
+  formState.disinf.dirty = false;
+  formState.modbus.dirty = false;
+
   Object.keys(UI.sections).forEach(key => {
     UI.sections[key].classList.remove('active');
   });
@@ -465,14 +505,16 @@ function updateDOM() {
   UI.optOpMode.value = state.operationMode;
   UI.disinfToggle.checked = state.disinfActive;
   
-  if (document.activeElement !== UI.inputDisinfTarget) UI.inputDisinfTarget.value = state.disinfTarget;
-  if (document.activeElement !== UI.inputDisinfHold) UI.inputDisinfHold.value = state.disinfHold;
-  if (document.activeElement !== UI.inputDisinfMaxTime) UI.inputDisinfMaxTime.value = state.disinfMaxTime;
+  if (!formState.disinf.dirty) {
+    UI.inputDisinfTarget.value = state.disinfTarget;
+    UI.inputDisinfHold.value = state.disinfHold;
+    UI.inputDisinfMaxTime.value = state.disinfMaxTime;
+  }
   
-  if (UI.inputFanOnTime && UI.inputFanOffTime && UI.inputFanTargetSpeed) {
-    if (document.activeElement !== UI.inputFanOnTime) UI.inputFanOnTime.value = state.fanOnTime;
-    if (document.activeElement !== UI.inputFanOffTime) UI.inputFanOffTime.value = state.fanOffTime;
-    if (document.activeElement !== UI.inputFanTargetSpeed) UI.inputFanTargetSpeed.value = state.fanTargetSpeed;
+  if (UI.inputFanOnTime && UI.inputFanOffTime && UI.inputFanTargetSpeed && !formState.fan.dirty) {
+    UI.inputFanOnTime.value = state.fanOnTime;
+    UI.inputFanOffTime.value = state.fanOffTime;
+    UI.inputFanTargetSpeed.value = state.fanTargetSpeed;
   }
   
   if (state.disinfActive) {
@@ -501,7 +543,7 @@ function updateDOM() {
     UI.disinfCurrentMetrics.style.display = 'none';
   }
   
-  if (UI.inputModbusAddress && document.activeElement !== UI.inputModbusAddress) {
+  if (UI.inputModbusAddress && !formState.modbus.dirty) {
     UI.inputModbusAddress.value = state.modbusAddress;
   }
   
@@ -782,6 +824,7 @@ function initEvents() {
       maxTime: state.disinfMaxTime
     })
     .then(() => {
+      formState.disinf.dirty = false;
       state.disinfActive = nextActiveState;
       if (state.disinfActive) {
         state.disinfStatus = 'heating';
@@ -848,6 +891,7 @@ function initEvents() {
       if (addr >= 1 && addr <= 247) {
         if (useLocalSimulation) {
           state.modbusAddress = addr;
+          formState.modbus.dirty = false;
           showToast('Modbus-Adresse in Simulation geändert.', 'success');
           updateDOM();
         } else {
@@ -855,6 +899,7 @@ function initEvents() {
             .then(res => {
               if (res && res.status === 'ok') {
                 state.modbusAddress = addr;
+                formState.modbus.dirty = false;
                 showToast('Modbus-Adresse erfolgreich gespeichert.', 'success');
                 updateDOM();
               }
@@ -879,6 +924,7 @@ function initEvents() {
           state.fanOnTime = onTime;
           state.fanOffTime = offTime;
           state.fanTargetSpeed = targetSpeed;
+          formState.fan.dirty = false;
           showToast('Lüfter-Intervalle in Simulation geändert.', 'success');
           updateDOM();
         } else {
@@ -888,6 +934,7 @@ function initEvents() {
                 state.fanOnTime = onTime;
                 state.fanOffTime = offTime;
                 state.fanTargetSpeed = targetSpeed;
+                formState.fan.dirty = false;
                 showToast('Lüfter-Intervalle erfolgreich gespeichert.', 'success');
                 updateDOM();
               }
@@ -911,6 +958,39 @@ function initEvents() {
   });
   
   document.querySelector('.header-left').addEventListener('click', () => navigateTo('home'));
+
+  // Helper to mark forms dirty on user input
+  const markDirty = (formKey) => {
+    formState[formKey].dirty = true;
+    formState[formKey].lastEditTime = Date.now();
+  };
+
+  // Track dirty states on form input/change events
+  if (UI.inputFanOnTime) {
+    UI.inputFanOnTime.addEventListener('input', () => markDirty('fan'));
+    UI.inputFanOffTime.addEventListener('input', () => markDirty('fan'));
+    UI.inputFanTargetSpeed.addEventListener('change', () => markDirty('fan'));
+  }
+  
+  if (UI.inputDisinfTarget) {
+    UI.inputDisinfTarget.addEventListener('input', () => markDirty('disinf'));
+    UI.inputDisinfHold.addEventListener('input', () => markDirty('disinf'));
+    UI.inputDisinfMaxTime.addEventListener('input', () => markDirty('disinf'));
+  }
+  
+  if (UI.inputModbusAddress) {
+    UI.inputModbusAddress.addEventListener('input', () => markDirty('modbus'));
+  }
+
+  // Discard all unsaved changes when page goes to standby or tab is hidden
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      formState.fan.dirty = false;
+      formState.disinf.dirty = false;
+      formState.modbus.dirty = false;
+      fetchStatus();
+    }
+  });
 }
 
 // Service Worker for PWA
