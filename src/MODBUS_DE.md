@@ -118,3 +118,13 @@ Wenn du ein neues Register hinzufügen möchtest (z. B. einen **Wasserdruck-Sens
 * **GPIO 4:** DE_RE (Verbindung zu DE/RE Pins des Transceivers zur Umschaltung Senden/Empfangen)
 
 > **Verkabelungs-Tipp:** Wenn du einen Standard-MAX485- oder SP3485-Transceiver nutzt, schließe die Pins DE (Driver Enable) und RE (Receiver Enable, active low) zusammen an den **GPIO 4** des ESP32 an. Das Programm schaltet diesen Pin automatisch auf `HIGH` vor dem Senden und danach sofort wieder auf `LOW`, um auf Empfang zu schalten.
+
+---
+
+## 6. HMI-Bedienung: Einklappbare Sektionen
+
+Um die Übersichtlichkeit auf Smartphones zu wahren, sind alle Kacheln in den **Anlagen-Einstellungen** sowie auf der **Serviceebene** einklappbar gestaltet:
+* Jede Kachel verfügt über ein Kopfzeilen-Element (`.card-header`) mit einem Richtungs-Chevron (`▼`).
+* Ein Klick auf die Kopfzeile klappt den Inhalt der Kachel ein oder aus.
+* Die Klasse `.collapsible` steuert dieses Verhalten CSS-seitig und blendet den Inhalt (`.card-content`) sanft aus oder ein, während der Chevron rotiert.
+

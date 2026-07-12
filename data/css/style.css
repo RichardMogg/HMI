@@ -891,4 +891,50 @@ select.input-control {
   }
 }
 
+/* Einklappbare Kacheln (Collapsible Cards) */
+.card.collapsible {
+  transition: all var(--transition-speed) ease;
+}
+
+.card.collapsible .card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  width: 100%;
+}
+
+.card.collapsible .card-header:hover .card-title {
+  color: var(--color-primary-hover);
+}
+
+.card.collapsible .chevron-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--text-muted);
+  transition: transform var(--transition-speed) ease;
+  transform: rotate(0deg);
+}
+
+.card.collapsible.collapsed .chevron-icon {
+  transform: rotate(-90deg); /* Zeigt nach links/rechts im eingeklappten Zustand */
+}
+
+.card.collapsible .card-content {
+  display: block;
+  width: 100%;
+  animation: slideDown var(--transition-speed) ease-out;
+}
+
+.card.collapsible.collapsed .card-content {
+  display: none;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+
 

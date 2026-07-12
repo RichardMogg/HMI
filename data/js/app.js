@@ -855,6 +855,14 @@ function initEvents() {
     });
   }
   
+  // Einklappbare Kacheln: Click-Handler für card-header
+  document.querySelectorAll('.card.collapsible .card-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const card = header.closest('.card');
+      card.classList.toggle('collapsed');
+    });
+  });
+  
   document.querySelector('.header-left').addEventListener('click', () => navigateTo('home'));
 }
 
