@@ -29,6 +29,9 @@ const state = {
   
   // Betriebsmodus
   operationMode: 'wp',
+  
+  // Modbus RTU Slave-ID
+  modbusAddress: 1,
 };
 
 // Config Constants
@@ -90,6 +93,8 @@ const UI = {
   inputDisinfTarget: document.getElementById('disinf-target'),
   inputDisinfHold: document.getElementById('disinf-hold'),
   inputDisinfMaxTime: document.getElementById('disinf-max-time'),
+  inputModbusAddress: document.getElementById('input-modbus-address'),
+  btnSaveModbus: document.getElementById('btn-save-modbus'),
   disinfCurrentMetrics: document.getElementById('disinf-current-metrics'),
   
   // WiFi Screen
@@ -192,6 +197,7 @@ function fetchStatus() {
       state.disinfHold = data.disinfHold;
       state.disinfMaxTime = data.disinfMaxTime;
       state.disinfStatus = data.disinfStatus;
+      state.modbusAddress = data.modbusAddress || 1;
       
       updateDOM();
     })
@@ -369,6 +375,10 @@ function updateDOM() {
     UI.disinfStatusBadge.className = 'badge badge-inactive';
     UI.disinfStatusBadge.textContent = 'Inaktiv';
     UI.disinfCurrentMetrics.style.display = 'none';
+  }
+  
+  if (UI.inputModbusAddress) {
+    UI.inputModbusAddress.value = state.modbusAddress;
   }
 }
 
@@ -679,6 +689,25 @@ function initEvents() {
         }, 1000);
       });
   });
+  
+  // Settings Screen: Modbus Address Save Handler
+  if (UI.btnSaveModbus) {
+    UI.btnSaveModbus.addEventListener('click', () => {
+      const addr = parseInt(UI.inputModbusAddress.value);
+      if (addr >= 1 && addr <= 247) {
+        postData('/api/modbus', { address: addr })
+          .then(res => {
+            if (res && res.status === 'ok') {
+              state.modbusAddress = addr;
+              showToast('Modbus-Adresse erfolgreich gespeichert.', 'success');
+            }
+          });
+      } else {
+        UI.inputModbusAddress.value = state.modbusAddress;
+        showToast('Ungültige Adresse (1 - 247 zulässig).', 'error');
+      }
+    });
+  }
   
   document.querySelector('.header-left').addEventListener('click', () => navigateTo('home'));
 }

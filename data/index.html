@@ -252,6 +252,19 @@
             <div class="card-footer">Die SPS regelt die Ansteuerung entsprechend der Effizienzkurve.</div>
           </div>
 
+          <!-- Card: Modbus RTU Einstellungen -->
+          <div class="card">
+            <h3 class="card-title">Modbus RTU Gateway</h3>
+            <div class="form-group" style="margin-top: 10px;">
+              <label for="input-modbus-address">Modbus Slave-Adresse (1 - 247)</label>
+              <div style="display: flex; gap: 10px;">
+                <input type="number" id="input-modbus-address" class="input-control" min="1" max="247" value="1" style="flex-grow: 1;">
+                <button id="btn-save-modbus" class="btn-primary" style="width: auto; padding: 0 20px;">Speichern</button>
+              </div>
+            </div>
+            <div class="card-footer">Die SPS kommuniziert mit dem Gateway über diese Slave-ID.</div>
+          </div>
+
           <!-- Card: Legionellen-Desinfektion -->
           <div class="card">
             <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">

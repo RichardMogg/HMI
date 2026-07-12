@@ -21,6 +21,7 @@ struct HMIState {
   bool heatingActive = true;
   bool modbusConnected = true;
   char operationMode[12] = "wp"; // wp, wp_stab, stab, ext, wp_ext
+  int modbusAddress = 1;         // Modbus RTU Slave-ID (1-247)
   
   // Legionellen-Desinfektion
   bool disinfActive = false;
@@ -48,6 +49,7 @@ void handleGetStatus() {
   doc["heatingActive"] = state.heatingActive;
   doc["modbusConnected"] = state.modbusConnected;
   doc["operationMode"] = state.operationMode;
+  doc["modbusAddress"] = state.modbusAddress;
   
   doc["disinfActive"] = state.disinfActive;
   doc["disinfTarget"] = state.disinfTarget;
@@ -124,6 +126,26 @@ void handlePostDisinfection() {
         strncpy(state.disinfStatus, "idle", sizeof(state.disinfStatus));
         Serial.println("Desinfektion manuell gestoppt.");
       }
+      server.send(200, "application/json", "{\"status\":\"ok\"}");
+      return;
+    }
+  }
+  server.send(400, "application/json", "{\"status\":\"error\"}");
+}
+
+// POST /api/modbus - Ändert die Modbus Slave-Adresse persistent
+void handlePostModbus() {
+  if (server.hasArg("plain")) {
+    JsonDocument doc;
+    deserializeJson(doc, server.arg("plain"));
+    if (doc.containsKey("address")) {
+      state.modbusAddress = doc["address"].as<int>();
+      
+      preferences.begin("hmi-gateway", false);
+      preferences.putInt("mb-addr", state.modbusAddress);
+      preferences.end();
+      
+      Serial.printf("Modbus Slave-ID geändert auf: %d\n", state.modbusAddress);
       server.send(200, "application/json", "{\"status\":\"ok\"}");
       return;
     }
@@ -219,10 +241,11 @@ void setup() {
   }
   Serial.println("LittleFS erfolgreich gemountet.");
 
-  // WLAN-Einstellungen aus dem persistenten Speicher (NVS) laden
+  // WLAN-Einstellungen & Modbus-Adresse aus dem persistenten Speicher (NVS) laden
   preferences.begin("hmi-gateway", false);
   apSSID = preferences.getString("ssid", "Waermepumpe-Gateway-AP");
   apPassword = preferences.getString("password", "testpassword123");
+  state.modbusAddress = preferences.getInt("mb-addr", 1);
   preferences.end();
 
   // Access Point starten mit geladenen Daten
@@ -242,6 +265,7 @@ void setup() {
   server.on("/api/power", HTTP_POST, handlePostPower);
   server.on("/api/mode", HTTP_POST, handlePostMode);
   server.on("/api/disinfection", HTTP_POST, handlePostDisinfection);
+  server.on("/api/modbus", HTTP_POST, handlePostModbus);
   server.on("/api/wifi", HTTP_POST, handlePostWifi);
 
   // Fallback
