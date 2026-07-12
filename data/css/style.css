@@ -849,3 +849,27 @@ select.input-control {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* Diagnostic table styling */
+.diagnostic-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 0.85rem;
+}
+.diagnostic-table th {
+  padding: 10px 8px;
+  color: var(--text-muted);
+  border-bottom: 2px solid var(--border-color);
+  font-weight: 600;
+  text-align: left;
+}
+.diagnostic-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-active);
+}
+.diagnostic-table tr:hover {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+

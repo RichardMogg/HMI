@@ -32,6 +32,9 @@ const state = {
   
   // Modbus RTU Slave-ID
   modbusAddress: 1,
+  
+  // Service-Ebene freigeschaltet
+  serviceUnlocked: false,
 };
 
 // Config Constants
@@ -70,7 +73,8 @@ const UI = {
     home: document.getElementById('section-home'),
     values: document.getElementById('section-values'),
     settings: document.getElementById('section-settings'),
-    wifi: document.getElementById('section-wifi')
+    wifi: document.getElementById('section-wifi'),
+    service: document.getElementById('section-service')
   },
   
   // Menu items
@@ -105,7 +109,9 @@ const UI = {
   
   // Modals
   rebootModal: document.getElementById('reboot-modal'),
-  rebootCountdown: document.getElementById('reboot-countdown')
+  rebootCountdown: document.getElementById('reboot-countdown'),
+  drawerTitle: document.getElementById('drawer-title'),
+  menuItemService: document.getElementById('menu-item-service')
 };
 
 // --- Toast / Benachrichtigungssystem ---
@@ -286,6 +292,59 @@ function updateModbusUI() {
   }
 }
 
+// --- Modbus Register Definitions for Diagnostics ---
+const modbusRegisters = [
+  { address: 1, type: 'Coil', datatype: 'Bool', desc: 'Hauptschalter Wärmepumpe', scale: '1:1', key: 'powerOn' },
+  { address: 2, type: 'Coil', datatype: 'Bool', desc: 'Legionellen-Desinfektion', scale: '1:1', key: 'disinfActive' },
+  { address: 30001, type: 'Input', datatype: 'Float', desc: 'Warmwasser-Isttemperatur', scale: '1:10', key: 'currentTemp', unit: '°C' },
+  { address: 30002, type: 'Input', datatype: 'Float', desc: 'Verdampfertemperatur', scale: '1:10', key: 'evaporatorTemp', unit: '°C' },
+  { address: 30003, type: 'Input', datatype: 'Int', desc: 'Lüfterdrehzahl', scale: '1:1', key: 'fanSpeed', unit: ' U/min' },
+  { address: 30004, type: 'Input', datatype: 'Bool', desc: 'Zusatzheizung Status (Heizstab)', scale: '1:1', key: 'heatingActive' },
+  { address: 40001, type: 'Holding', datatype: 'Float', desc: 'Warmwasser-Sollwert', scale: '1:10', key: 'setpoint', unit: '°C' },
+  { address: 40002, type: 'Holding', datatype: 'Int', desc: 'Betriebsmodus', scale: '1:1', key: 'operationMode' },
+  { address: 40003, type: 'Holding', datatype: 'Int', desc: 'Desinfektion: Zieltemperatur', scale: '1:1', key: 'disinfTarget', unit: '°C' },
+  { address: 40004, type: 'Holding', datatype: 'Int', desc: 'Desinfektion: Haltedauer', scale: '1:1', key: 'disinfHold', unit: ' Min' },
+  { address: 40005, type: 'Holding', datatype: 'Int', desc: 'Desinfektion: Max. Aufheizzeit', scale: '1:1', key: 'disinfMaxTime', unit: ' Min' }
+];
+
+function updateModbusRegisterTable() {
+  const tbody = document.getElementById('modbus-register-table-body');
+  if (!tbody) return;
+  
+  let html = '';
+  modbusRegisters.forEach(reg => {
+    let rawVal = state[reg.key];
+    let formattedVal = '';
+    
+    if (reg.key === 'operationMode') {
+      switch (rawVal) {
+        case 1: formattedVal = 'Hybrid (wp_stab / 1)'; break;
+        case 2: formattedVal = 'Notbetrieb (stab / 2)'; break;
+        case 3: formattedVal = 'Extern (ext / 3)'; break;
+        case 4: formattedVal = 'WP + Extern (wp_ext / 4)'; break;
+        default: formattedVal = 'Eco (wp / 0)'; break;
+      }
+    } else if (reg.datatype === 'Bool') {
+      formattedVal = rawVal ? 'AN (1)' : 'AUS (0)';
+    } else if (typeof rawVal === 'number') {
+      formattedVal = rawVal.toFixed(reg.datatype === 'Float' ? 1 : 0) + (reg.unit || '');
+    } else {
+      formattedVal = rawVal;
+    }
+    
+    html += `
+      <tr>
+        <td style="font-weight: 700; color: var(--color-primary-hover); font-family: monospace;">${reg.address}</td>
+        <td style="font-weight: 500;">${reg.desc}</td>
+        <td><span class="badge ${reg.type === 'Coil' ? 'badge-success' : reg.type === 'Holding' ? 'badge-warning' : 'badge-inactive'}" style="transform: scale(0.9); font-size: 0.7rem;">${reg.type}</span></td>
+        <td style="color: var(--text-muted); font-family: monospace;">${reg.scale}</td>
+        <td style="text-align: right; font-weight: 700; color: var(--text-active); font-family: monospace;">${formattedVal}</td>
+      </tr>
+    `;
+  });
+  tbody.innerHTML = html;
+}
+
 function updateDOM() {
   // --- Homescreen View Update ---
   UI.powerSwitch.checked = state.powerOn;
@@ -380,6 +439,9 @@ function updateDOM() {
   if (UI.inputModbusAddress) {
     UI.inputModbusAddress.value = state.modbusAddress;
   }
+  
+  // Registertabelle updaten
+  updateModbusRegisterTable();
 }
 
 // --- Radial Dial Drag Handling ---
@@ -481,6 +543,30 @@ function runSimulationTick() {
 
 // --- Event Listeners ---
 function initEvents() {
+  // Easter-Egg: Service-Ebene freischalten durch 5-maliges Tippen auf HMI Navigation
+  let serviceClicks = 0;
+  let serviceClickTimer = null;
+  
+  if (UI.drawerTitle) {
+    UI.drawerTitle.addEventListener('click', () => {
+      serviceClicks++;
+      clearTimeout(serviceClickTimer);
+      serviceClickTimer = setTimeout(() => {
+        serviceClicks = 0;
+      }, 3000);
+      
+      if (serviceClicks >= 5) {
+        serviceClicks = 0;
+        state.serviceUnlocked = true;
+        if (UI.menuItemService) {
+          UI.menuItemService.style.display = 'block';
+        }
+        showToast('Serviceebene freigeschaltet!', 'warning');
+        navigateTo('service');
+      }
+    });
+  }
+
   UI.btnMenu.addEventListener('click', openDrawer);
   UI.btnCloseMenu.addEventListener('click', closeDrawer);
   UI.drawerOverlay.addEventListener('click', closeDrawer);
