@@ -369,9 +369,27 @@ void syncModbusRegisters() {
   }
 }
 
+unsigned long bootTime = 0;
+bool bootFlagCleared = false;
+bool useFailsafeWifi = false;
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
+
+  // Double Reset Detection
+  preferences.begin("hmi_gateway", false);
+  int resetCount = preferences.getInt("reset-count", 0);
+  if (resetCount >= 1) {
+    useFailsafeWifi = true;
+    preferences.putInt("reset-count", 0);
+    Serial.println("DOUBLE RESET DETECTED! Booting in Failsafe Mode...");
+  } else {
+    preferences.putInt("reset-count", 1);
+    Serial.println("Stable boot counter incremented. Will reset to 0 in 5 seconds of stable operation.");
+  }
+  preferences.end();
+  bootTime = millis();
   
   // LittleFS initialisieren
   if (!LittleFS.begin(true)) {
@@ -388,6 +406,11 @@ void setup() {
   preferences.end();
 
   // Access Point starten
+  if (useFailsafeWifi) {
+    apSSID = "Gateway-AP";
+    apPassword = "failsafepw";
+    Serial.println("Failsafe AP credentials loaded: SSID=Gateway-AP, PW=failsafepw");
+  }
   WiFi.softAP(apSSID.c_str(), apPassword.c_str());
   IPAddress IP = WiFi.softAPIP();
   Serial.print("WLAN-AP gestartet. SSID: ");
@@ -438,6 +461,15 @@ void setup() {
 void loop() {
   dnsServer.processNextRequest();
   server.handleClient();
+  
+  // Double-Reset Flagge nach 5 Sekunden stabiler Laufzeit löschen
+  if (!bootFlagCleared && (millis() - bootTime > 5000)) {
+    preferences.begin("hmi_gateway", false);
+    preferences.putInt("reset-count", 0);
+    preferences.end();
+    bootFlagCleared = true;
+    Serial.println("Stable operation reached. Reset-count cleared to 0.");
+  }
   
   // Modbus-Anfragen verarbeiten & Register synchronisieren
   mb.task();

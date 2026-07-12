@@ -140,3 +140,15 @@ Das Gateway spannt bei Inbetriebnahme oder nach einem Reset ein eigenes verschl�
 * **Standard-IP-Adresse:** `192.168.4.1` (oder mDNS: `http://hmi.local/`)
 
 Die Zugangsdaten können im Web-HMI unter den Einstellungen geändert werden. Nach dem Speichern startet das Gateway neu und speichert die Daten im persistenten Flash-Speicher (`Preferences`).
+
+### Failsafe-Modus (Wiederherstellung bei vergessenen Zugangsdaten)
+
+Solltest du das selbst gewählte WLAN-Passwort vergessen haben, kannst du das HMI-Gateway in den **Failsafe-Modus** versetzen:
+1. Schalte das Gateway (oder die Versorgungsspannung des ESP32) ein.
+2. Schalte es innerhalb von **5 Sekunden** nach dem Start wieder aus und sofort wieder ein (**Double-Reset**).
+3. Das HMI-Gateway startet nun im Failsafe-Modus und spannt folgendes Notfall-WLAN auf:
+   * **Notfall-SSID:** `Gateway-AP`
+   * **Notfall-Passwort:** `failsafepw`
+4. Verbinde dich mit diesem WLAN und öffne die HMI-Oberfläche. Du kannst in den Einstellungen ein neues Passwort vergeben.
+5. Nach 5 Sekunden stabilem Betrieb im normalen Modus oder nach dem nächsten regulären Neustart läuft das Gateway wieder wie gewohnt mit deinen konfigurierten Daten.
+
