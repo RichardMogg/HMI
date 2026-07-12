@@ -304,7 +304,7 @@ void syncModbusRegisters() {
     } 
     else if (reg.regType == TYPE_COIL) {
       // Coils (Read-Write)
-      uint16_t mbVal = mb.coil(reg.address) ? 1 : 0;
+      uint16_t mbVal = mb.Coil(reg.address) ? 1 : 0;
       if (mbVal != reg.lastValue) {
         // Modbus Master (SPS) hat Wert überschrieben
         if (reg.valType == VAL_BOOL) {
@@ -313,7 +313,7 @@ void syncModbusRegisters() {
         reg.lastValue = mbVal;
       } else if (currentLocalVal != reg.lastValue) {
         // Web-API/HMI hat Wert überschrieben
-        mb.coil(reg.address, currentLocalVal == 1);
+        mb.Coil(reg.address, currentLocalVal == 1);
         reg.lastValue = currentLocalVal;
       }
     } 
