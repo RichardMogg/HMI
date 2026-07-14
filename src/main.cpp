@@ -46,6 +46,14 @@ struct HMIState {
   int fanOnTime = 15;
   int fanOffTime = 45;
   int fanTargetSpeed = 1; // 1 = Niedrig, 2 = Hoch
+
+  // Anlagenparameter BWWP
+  float hysteresis = 5.0;        // K – Schalthysterese Sollwert
+  int   maxWpTemp = 55;          // °C – Max. Temperatur für WP-Betrieb
+  int   minAirTemp = 5;          // °C – Min. Lufttemperatur für WP-Freigabe
+  int   minRunTime = 10;         // min – Mindestlaufzeit Kompressor
+  int   minStandbyTime = 5;      // min – Mindeststillstandszeit Kompressor
+  int   heatingRodDelay = 45;    // min – Verzögerung bis Heizstab-Freigabe
 } state;
 
 // --- Tabellenbasierte Register-Struktur (Service-Schicht) ---
@@ -75,9 +83,16 @@ ModbusRegister regTable[] = {
   { 40003, TYPE_HREG, VAL_INT,   &state.disinfTarget,   1.0,  0 },
   { 40004, TYPE_HREG, VAL_INT,   &state.disinfHold,     1.0,  0 },
   { 40005, TYPE_HREG, VAL_INT,   &state.disinfMaxTime,  1.0,  0 },
-  { 40006, TYPE_HREG, VAL_INT,   &state.fanOnTime,      1.0,  0 },
-  { 40007, TYPE_HREG, VAL_INT,   &state.fanOffTime,     1.0,  0 },
-  { 40008, TYPE_HREG, VAL_INT,   &state.fanTargetSpeed, 1.0,  0 }
+  { 40006, TYPE_HREG, VAL_INT,   &state.fanOnTime,       1.0,  0 },
+  { 40007, TYPE_HREG, VAL_INT,   &state.fanOffTime,      1.0,  0 },
+  { 40008, TYPE_HREG, VAL_INT,   &state.fanTargetSpeed,  1.0,  0 },
+  // Anlagenparameter BWWP
+  { 40009, TYPE_HREG, VAL_FLOAT, &state.hysteresis,      10.0, 0 },
+  { 40010, TYPE_HREG, VAL_INT,   &state.maxWpTemp,       1.0,  0 },
+  { 40011, TYPE_HREG, VAL_INT,   &state.minAirTemp,      1.0,  0 },
+  { 40012, TYPE_HREG, VAL_INT,   &state.minRunTime,      1.0,  0 },
+  { 40013, TYPE_HREG, VAL_INT,   &state.minStandbyTime,  1.0,  0 },
+  { 40014, TYPE_HREG, VAL_INT,   &state.heatingRodDelay, 1.0,  0 }
 };
 
 const int NUM_REGISTERS = sizeof(regTable) / sizeof(ModbusRegister);
@@ -103,6 +118,14 @@ void handleGetStatus() {
   doc["fanOnTime"] = state.fanOnTime;
   doc["fanOffTime"] = state.fanOffTime;
   doc["fanTargetSpeed"] = state.fanTargetSpeed;
+
+  // Anlagenparameter BWWP
+  doc["hysteresis"]      = state.hysteresis;
+  doc["maxWpTemp"]       = state.maxWpTemp;
+  doc["minAirTemp"]      = state.minAirTemp;
+  doc["minRunTime"]      = state.minRunTime;
+  doc["minStandbyTime"]  = state.minStandbyTime;
+  doc["heatingRodDelay"] = state.heatingRodDelay;
   
   // Konvertiere numerischen Betriebsmodus in String für das HMI
   switch (state.operationMode) {
@@ -137,6 +160,13 @@ void saveRegisterToNVS(uint16_t address) {
     case 40006: preferences.putInt("fan-ontime", state.fanOnTime); break;
     case 40007: preferences.putInt("fan-offtime", state.fanOffTime); break;
     case 40008: preferences.putInt("fan-speed", state.fanTargetSpeed); break;
+    // Anlagenparameter BWWP
+    case 40009: preferences.putFloat("hysteresis", state.hysteresis); break;
+    case 40010: preferences.putInt("max-wp-temp", state.maxWpTemp); break;
+    case 40011: preferences.putInt("min-air-temp", state.minAirTemp); break;
+    case 40012: preferences.putInt("min-runtime", state.minRunTime); break;
+    case 40013: preferences.putInt("min-standby", state.minStandbyTime); break;
+    case 40014: preferences.putInt("rod-delay", state.heatingRodDelay); break;
   }
   preferences.end();
 }
@@ -266,6 +296,53 @@ void handlePostModbus() {
       // Slave ID im aktiven Modbus-Objekt updaten
       mb.slave(state.modbusAddress);
       
+      server.send(200, "application/json", "{\"status\":\"ok\"}");
+      return;
+    }
+  }
+  server.send(400, "application/json", "{\"status\":\"error\"}");
+}
+
+// POST /api/anlage - Aktualisiert die Anlagenparameter der BWWP
+void handlePostAnlage() {
+  if (server.hasArg("plain")) {
+    JsonDocument doc;
+    deserializeJson(doc, server.arg("plain"));
+    bool anyChanged = false;
+    if (doc.containsKey("hysteresis")) {
+      state.hysteresis = doc["hysteresis"].as<float>();
+      saveRegisterToNVS(40009);
+      anyChanged = true;
+    }
+    if (doc.containsKey("maxWpTemp")) {
+      state.maxWpTemp = doc["maxWpTemp"].as<int>();
+      saveRegisterToNVS(40010);
+      anyChanged = true;
+    }
+    if (doc.containsKey("minAirTemp")) {
+      state.minAirTemp = doc["minAirTemp"].as<int>();
+      saveRegisterToNVS(40011);
+      anyChanged = true;
+    }
+    if (doc.containsKey("minRunTime")) {
+      state.minRunTime = doc["minRunTime"].as<int>();
+      saveRegisterToNVS(40012);
+      anyChanged = true;
+    }
+    if (doc.containsKey("minStandbyTime")) {
+      state.minStandbyTime = doc["minStandbyTime"].as<int>();
+      saveRegisterToNVS(40013);
+      anyChanged = true;
+    }
+    if (doc.containsKey("heatingRodDelay")) {
+      state.heatingRodDelay = doc["heatingRodDelay"].as<int>();
+      saveRegisterToNVS(40014);
+      anyChanged = true;
+    }
+    if (anyChanged) {
+      Serial.printf("Anlagenparameter gespeichert: Hyst=%.1f, MaxWP=%d, MinLuft=%d, MinRun=%d, MinStop=%d, RodDelay=%d\n",
+        state.hysteresis, state.maxWpTemp, state.minAirTemp,
+        state.minRunTime, state.minStandbyTime, state.heatingRodDelay);
       server.send(200, "application/json", "{\"status\":\"ok\"}");
       return;
     }
@@ -450,6 +527,13 @@ void setup() {
   state.fanOnTime = preferences.getInt("fan-ontime", 15);
   state.fanOffTime = preferences.getInt("fan-offtime", 45);
   state.fanTargetSpeed = preferences.getInt("fan-speed", 1);
+  // Anlagenparameter BWWP
+  state.hysteresis      = preferences.getFloat("hysteresis", 5.0);
+  state.maxWpTemp       = preferences.getInt("max-wp-temp", 55);
+  state.minAirTemp      = preferences.getInt("min-air-temp", 5);
+  state.minRunTime      = preferences.getInt("min-runtime", 10);
+  state.minStandbyTime  = preferences.getInt("min-standby", 5);
+  state.heatingRodDelay = preferences.getInt("rod-delay", 45);
   preferences.end();
 
   // Access Point starten
@@ -495,6 +579,7 @@ void setup() {
   server.on("/api/disinfection", HTTP_POST, handlePostDisinfection);
   server.on("/api/fan", HTTP_POST, handlePostFan);
   server.on("/api/modbus", HTTP_POST, handlePostModbus);
+  server.on("/api/anlage", HTTP_POST, handlePostAnlage);
   server.on("/api/wifi", HTTP_POST, handlePostWifi);
 
   // Fallback
@@ -548,7 +633,7 @@ void loop() {
             }
           } else {
             state.currentTemp -= 0.02;
-            if (state.currentTemp < state.setpoint - 1.5) {
+            if (state.currentTemp < state.setpoint - state.hysteresis) {
               state.heatingActive = true;
             }
           }

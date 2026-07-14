@@ -40,6 +40,14 @@ const state = {
   fanOnTime: 15,
   fanOffTime: 45,
   fanTargetSpeed: 1,
+
+  // Anlagenparameter BWWP
+  hysteresis: 5.0,
+  maxWpTemp: 55,
+  minAirTemp: 5,
+  minRunTime: 10,
+  minStandbyTime: 5,
+  heatingRodDelay: 45,
 };
 
 // --- Form Dirty/Edit State ---
@@ -53,6 +61,10 @@ const formState = {
     lastEditTime: 0
   },
   modbus: {
+    dirty: false,
+    lastEditTime: 0
+  },
+  anlage: {
     dirty: false,
     lastEditTime: 0
   }
@@ -138,7 +150,16 @@ const UI = {
   inputFanOnTime: document.getElementById('fan-on-time'),
   inputFanOffTime: document.getElementById('fan-off-time'),
   inputFanTargetSpeed: document.getElementById('fan-target-speed'),
-  btnSaveFan: document.getElementById('btn-save-fan')
+  btnSaveFan: document.getElementById('btn-save-fan'),
+
+  // Anlagen-Parameter BWWP
+  inputAnlageHysteresis: document.getElementById('anlage-hysteresis'),
+  inputAnlageMaxWpTemp: document.getElementById('anlage-max-wp-temp'),
+  inputAnlageMinAirTemp: document.getElementById('anlage-min-air-temp'),
+  inputAnlageMinRuntime: document.getElementById('anlage-min-runtime'),
+  inputAnlageMinStandby: document.getElementById('anlage-min-standby'),
+  inputAnlageRodDelay: document.getElementById('anlage-rod-delay'),
+  btnSaveAnlage: document.getElementById('btn-save-anlage')
 };
 
 // --- Toast / Benachrichtigungssystem ---
@@ -253,6 +274,18 @@ function fetchStatus() {
       } else if (Date.now() - formState.fan.lastEditTime > 60000) {
         formState.fan.dirty = false;
       }
+
+      // Update Anlagenparameter only if not dirty
+      if (!formState.anlage.dirty) {
+        state.hysteresis      = data.hysteresis      ?? 5.0;
+        state.maxWpTemp       = data.maxWpTemp       ?? 55;
+        state.minAirTemp      = data.minAirTemp      ?? 5;
+        state.minRunTime      = data.minRunTime      ?? 10;
+        state.minStandbyTime  = data.minStandbyTime  ?? 5;
+        state.heatingRodDelay = data.heatingRodDelay ?? 45;
+      } else if (Date.now() - formState.anlage.lastEditTime > 60000) {
+        formState.anlage.dirty = false;
+      }
       
       updateDOM();
     })
@@ -300,6 +333,7 @@ function navigateTo(sectionId) {
   formState.fan.dirty = false;
   formState.disinf.dirty = false;
   formState.modbus.dirty = false;
+  formState.anlage.dirty = false;
 
   Object.keys(UI.sections).forEach(key => {
     UI.sections[key].classList.remove('active');
@@ -385,7 +419,13 @@ const modbusRegisters = [
   { address: 40005, type: 'Holding', datatype: 'Int', desc: 'Desinfektion: Max. Aufheizzeit', scale: '1:1', key: 'disinfMaxTime', unit: ' Min' },
   { address: 40006, type: 'Holding', datatype: 'Int', desc: 'Lüfter: Einschaltzeit', scale: '1:1', key: 'fanOnTime', unit: ' Min' },
   { address: 40007, type: 'Holding', datatype: 'Int', desc: 'Lüfter: Pausezeit', scale: '1:1', key: 'fanOffTime', unit: ' Min' },
-  { address: 40008, type: 'Holding', datatype: 'Int', desc: 'Lüfter: Solldrehzahl', scale: '1:1', key: 'fanTargetSpeed' }
+  { address: 40008, type: 'Holding', datatype: 'Int', desc: 'Lüfter: Solldrehzahl', scale: '1:1', key: 'fanTargetSpeed' },
+  { address: 40009, type: 'Holding', datatype: 'Float', desc: 'Schalthysterese', scale: '1:10', key: 'hysteresis', unit: ' K' },
+  { address: 40010, type: 'Holding', datatype: 'Int', desc: 'Max. WP-Temperatur', scale: '1:1', key: 'maxWpTemp', unit: '°C' },
+  { address: 40011, type: 'Holding', datatype: 'Int', desc: 'Min. Lufttemperatur WP-Freigabe', scale: '1:1', key: 'minAirTemp', unit: '°C' },
+  { address: 40012, type: 'Holding', datatype: 'Int', desc: 'Kompressor: Mindestlaufzeit', scale: '1:1', key: 'minRunTime', unit: ' Min' },
+  { address: 40013, type: 'Holding', datatype: 'Int', desc: 'Kompressor: Mindeststillstandszeit', scale: '1:1', key: 'minStandbyTime', unit: ' Min' },
+  { address: 40014, type: 'Holding', datatype: 'Int', desc: 'Heizstab-Freigabe-Verzögerung', scale: '1:1', key: 'heatingRodDelay', unit: ' Min' }
 ];
 
 function updateModbusRegisterTable() {
@@ -546,7 +586,17 @@ function updateDOM() {
   if (UI.inputModbusAddress && !formState.modbus.dirty) {
     UI.inputModbusAddress.value = state.modbusAddress;
   }
-  
+
+  // --- Anlagen-Parameter BWWP Update ---
+  if (UI.inputAnlageHysteresis && !formState.anlage.dirty) {
+    UI.inputAnlageHysteresis.value = state.hysteresis.toFixed(1);
+    UI.inputAnlageMaxWpTemp.value   = state.maxWpTemp;
+    UI.inputAnlageMinAirTemp.value  = state.minAirTemp;
+    UI.inputAnlageMinRuntime.value  = state.minRunTime;
+    UI.inputAnlageMinStandby.value  = state.minStandbyTime;
+    UI.inputAnlageRodDelay.value    = state.heatingRodDelay;
+  }
+
   // Registertabelle updaten
   updateModbusRegisterTable();
 }
@@ -948,6 +998,55 @@ function initEvents() {
       }
     });
   }
+
+  // Settings Screen: Anlagen-Parameter BWWP Save Handler
+  if (UI.btnSaveAnlage) {
+    UI.btnSaveAnlage.addEventListener('click', () => {
+      const hysteresis      = parseFloat(UI.inputAnlageHysteresis.value);
+      const maxWpTemp       = parseInt(UI.inputAnlageMaxWpTemp.value);
+      const minAirTemp      = parseInt(UI.inputAnlageMinAirTemp.value);
+      const minRunTime      = parseInt(UI.inputAnlageMinRuntime.value);
+      const minStandbyTime  = parseInt(UI.inputAnlageMinStandby.value);
+      const heatingRodDelay = parseInt(UI.inputAnlageRodDelay.value);
+
+      const valid =
+        hysteresis >= 2.0 && hysteresis <= 10.0 &&
+        maxWpTemp >= 50 && maxWpTemp <= 65 &&
+        minAirTemp >= -5 && minAirTemp <= 15 &&
+        minRunTime >= 5 && minRunTime <= 20 &&
+        minStandbyTime >= 3 && minStandbyTime <= 15 &&
+        heatingRodDelay >= 20 && heatingRodDelay <= 120;
+
+      if (valid) {
+        const payload = { hysteresis, maxWpTemp, minAirTemp, minRunTime, minStandbyTime, heatingRodDelay };
+        if (useLocalSimulation) {
+          Object.assign(state, payload);
+          formState.anlage.dirty = false;
+          showToast('Anlagen-Parameter in Simulation gespeichert.', 'success');
+          updateDOM();
+        } else {
+          postData('/api/anlage', payload)
+            .then(res => {
+              if (res && res.status === 'ok') {
+                Object.assign(state, payload);
+                formState.anlage.dirty = false;
+                showToast('Anlagen-Parameter erfolgreich gespeichert.', 'success');
+                updateDOM();
+              }
+            });
+        }
+      } else {
+        // Reset to last known-good values
+        UI.inputAnlageHysteresis.value = state.hysteresis.toFixed(1);
+        UI.inputAnlageMaxWpTemp.value   = state.maxWpTemp;
+        UI.inputAnlageMinAirTemp.value  = state.minAirTemp;
+        UI.inputAnlageMinRuntime.value  = state.minRunTime;
+        UI.inputAnlageMinStandby.value  = state.minStandbyTime;
+        UI.inputAnlageRodDelay.value    = state.heatingRodDelay;
+        showToast('Ungültige Werte – bitte Bereiche prüfen.', 'error');
+      }
+    });
+  }
   
   // Einklappbare Kacheln: Click-Handler für card-header
   document.querySelectorAll('.card.collapsible .card-header').forEach(header => {
@@ -982,12 +1081,22 @@ function initEvents() {
     UI.inputModbusAddress.addEventListener('input', () => markDirty('modbus'));
   }
 
+  if (UI.inputAnlageHysteresis) {
+    UI.inputAnlageHysteresis.addEventListener('input',  () => markDirty('anlage'));
+    UI.inputAnlageMaxWpTemp.addEventListener('input',   () => markDirty('anlage'));
+    UI.inputAnlageMinAirTemp.addEventListener('input',  () => markDirty('anlage'));
+    UI.inputAnlageMinRuntime.addEventListener('input',  () => markDirty('anlage'));
+    UI.inputAnlageMinStandby.addEventListener('input',  () => markDirty('anlage'));
+    UI.inputAnlageRodDelay.addEventListener('input',    () => markDirty('anlage'));
+  }
+
   // Discard all unsaved changes when page goes to standby or tab is hidden
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       formState.fan.dirty = false;
       formState.disinf.dirty = false;
       formState.modbus.dirty = false;
+      formState.anlage.dirty = false;
       fetchStatus();
     }
   });

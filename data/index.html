@@ -344,7 +344,54 @@
             </div>
           </div>
 
-          <!-- Card: WLAN Access Point -->
+          <!-- Card: Anlagen-Parameter BWWP -->
+          <div class="card collapsible collapsed">
+            <div class="card-header">
+              <h3 class="card-title">Anlagen-Parameter BWWP</h3>
+              <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </div>
+            <div class="card-content">
+              <p style="font-size: 0.875rem; color: var(--text-muted); line-height: 1.4; margin-top: -6px;">
+                Betriebsgrenzen und Schutzzeiten für den Kompressor der Brauchwasserwärmepumpe.
+              </p>
+              <!-- Temperatur-Parameter -->
+              <p style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 14px 0 8px;">Temperaturgrenzen</p>
+              <div class="disinfection-controls-grid" style="margin-top: 0;">
+                <div class="form-group">
+                  <label for="anlage-hysteresis">Schalthysterese (K)</label>
+                  <input type="number" id="anlage-hysteresis" class="input-control" min="2" max="10" step="0.5" value="5.0">
+                </div>
+                <div class="form-group">
+                  <label for="anlage-max-wp-temp">Max. WP-Temperatur (°C)</label>
+                  <input type="number" id="anlage-max-wp-temp" class="input-control" min="50" max="65" value="55">
+                </div>
+                <div class="form-group" style="grid-column: span 2;">
+                  <label for="anlage-min-air-temp">Min. Lufttemperatur WP-Freigabe (°C)</label>
+                  <input type="number" id="anlage-min-air-temp" class="input-control" min="-5" max="15" value="5">
+                </div>
+              </div>
+              <!-- Laufzeit-Parameter -->
+              <p style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 14px 0 8px;">Kompressor-Schutzzeiten</p>
+              <div class="disinfection-controls-grid" style="margin-top: 0;">
+                <div class="form-group">
+                  <label for="anlage-min-runtime">Mindestlaufzeit (Minuten)</label>
+                  <input type="number" id="anlage-min-runtime" class="input-control" min="5" max="20" value="10">
+                </div>
+                <div class="form-group">
+                  <label for="anlage-min-standby">Mindeststillstandszeit (Minuten)</label>
+                  <input type="number" id="anlage-min-standby" class="input-control" min="3" max="15" value="5">
+                </div>
+                <div class="form-group" style="grid-column: span 2;">
+                  <label for="anlage-rod-delay">Heizstab-Freigabe-Verzögerung (Minuten)</label>
+                  <input type="number" id="anlage-rod-delay" class="input-control" min="20" max="120" value="45">
+                </div>
+              </div>
+              <button id="btn-save-anlage" class="btn-primary" style="margin-top: 12px; width: 100%;">Einstellungen speichern</button>
+              <div class="card-footer">Werte werden persistent im Flash-Speicher abgelegt und via Modbus-Register 40009–40014 an die SPS übertragen.</div>
+            </div>
+          </div>
+
+
           <div class="card collapsible collapsed">
             <div class="card-header">
               <h3 class="card-title">Lokales WLAN-Netzwerk</h3>
