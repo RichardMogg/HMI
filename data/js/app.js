@@ -48,6 +48,13 @@ const state = {
   minRunTime: 10,
   minStandbyTime: 5,
   heatingRodDelay: 45,
+
+  // Alarm- und Verbindungszustaende (vom Gateway-API)
+  hdAlarm: false,
+  ndAlarm: false,
+  sensorTimeout: false,
+  sensorValid: false,
+  sensorAgeSec: -1,
 };
 
 // --- Form Dirty/Edit State ---
@@ -57,10 +64,6 @@ const formState = {
     lastEditTime: 0
   },
   disinf: {
-    dirty: false,
-    lastEditTime: 0
-  },
-  modbus: {
     dirty: false,
     lastEditTime: 0
   },
@@ -122,6 +125,11 @@ const UI = {
   valFanSpeed: document.getElementById('val-fan-speed'),
   valHeaterState: document.getElementById('val-heater-state'),
   valModbusState: document.getElementById('val-modbus-state'),
+  valSensorConnection: document.getElementById('val-sensor-connection'),
+  valHdState: document.getElementById('val-hd-state'),
+  valNdState: document.getElementById('val-nd-state'),
+  alarmBanner: document.getElementById('alarm-banner'),
+  alarmText: document.getElementById('alarm-text'),
   
   // Settings Screen
   optOpMode: document.getElementById('opt-operation-mode'),
@@ -130,8 +138,6 @@ const UI = {
   inputDisinfTarget: document.getElementById('disinf-target'),
   inputDisinfHold: document.getElementById('disinf-hold'),
   inputDisinfMaxTime: document.getElementById('disinf-max-time'),
-  inputModbusAddress: document.getElementById('input-modbus-address'),
-  btnSaveModbus: document.getElementById('btn-save-modbus'),
   disinfCurrentMetrics: document.getElementById('disinf-current-metrics'),
   
   // WiFi Screen
@@ -245,6 +251,9 @@ function fetchStatus() {
       state.fanSpeed = data.fanSpeed;
       state.heatingActive = data.heatingActive;
       state.modbusConnected = data.modbusConnected;
+      state.hdAlarm         = data.hdAlarm      ?? false;
+      state.ndAlarm         = data.ndAlarm      ?? false;
+      state.sensorTimeout   = data.sensorTimeout ?? false;
       
       state.disinfActive = data.disinfActive;
       state.disinfStatus = data.disinfStatus;
@@ -257,13 +266,6 @@ function fetchStatus() {
       } else if (Date.now() - formState.disinf.lastEditTime > 60000) {
         // Discard unsaved changes after 1 minute of inactivity
         formState.disinf.dirty = false;
-      }
-      
-      // Update modbus address only if not dirty
-      if (!formState.modbus.dirty) {
-        state.modbusAddress = data.modbusAddress || 1;
-      } else if (Date.now() - formState.modbus.lastEditTime > 60000) {
-        formState.modbus.dirty = false;
       }
       
       // Update fan settings only if not dirty
@@ -290,11 +292,11 @@ function fetchStatus() {
       updateDOM();
     })
     .catch(err => {
-      // Falls der Fetch fehlschlägt und wir nicht auf localhost/IP sind,
-      // wechseln wir automatisch in den Simulationsmodus (für lokale Entwicklung)
+      // Falls der Fetch fehlschlaegt und wir nicht auf localhost/IP sind,
+      // wechseln wir automatisch in den Simulationsmodus (fuer lokale Entwicklung)
       if (!useLocalSimulation) {
         useLocalSimulation = true;
-        console.warn("Verbindung zum ESP32 fehlgeschlagen. Starte lokalen Simulationsmodus für Demo-Zwecke.", err);
+        console.warn("Verbindung zum ESP32 fehlgeschlagen. Starte lokalen Simulationsmodus fuer Demo-Zwecke.", err);
       }
       
       if (useLocalSimulation) {
@@ -305,6 +307,19 @@ function fetchStatus() {
         updateDOM();
       }
     });
+}
+
+// Sensorboard-Verbindungsstatus separat abrufen (ageSec, valid)
+function fetchSensors() {
+  if (useLocalSimulation) return;
+  fetch('/api/sensors')
+    .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+    .then(d => {
+      state.sensorValid  = d.valid  ?? false;
+      state.sensorAgeSec = d.ageSec ?? -1;
+      updateDOM();
+    })
+    .catch(() => {});
 }
 
 let docLoaded = false;
@@ -332,7 +347,6 @@ function navigateTo(sectionId) {
   // Reset dirty settings when changing pages (discards unsaved changes)
   formState.fan.dirty = false;
   formState.disinf.dirty = false;
-  formState.modbus.dirty = false;
   formState.anlage.dirty = false;
 
   Object.keys(UI.sections).forEach(key => {
@@ -513,7 +527,23 @@ function updateDOM() {
   
   updateDialUI();
   updateModbusUI();
-  
+
+  // --- Alarm-Banner: HD/ND-Alarm und Sensor-Timeout ---
+  if (UI.alarmBanner && UI.alarmText) {
+    if (state.sensorTimeout) {
+      UI.alarmBanner.style.display = 'flex';
+      UI.alarmText.textContent = 'SENSOR-TIMEOUT: Sensorboard nicht erreichbar – Notabschaltung aktiv!';
+    } else if (state.hdAlarm) {
+      UI.alarmBanner.style.display = 'flex';
+      UI.alarmText.textContent = 'ALARM: Hochdruckschalter ausgelöst! Kompressor abgeschaltet.';
+    } else if (state.ndAlarm) {
+      UI.alarmBanner.style.display = 'flex';
+      UI.alarmText.textContent = 'ALARM: Niederdruckschalter ausgelöst! Kompressor abgeschaltet.';
+    } else {
+      UI.alarmBanner.style.display = 'none';
+    }
+  }
+
   // --- Values View Update ---
   if (!state.modbusConnected) {
     UI.valIstTemp.innerHTML = `<span style="color: var(--color-error);">Fehler</span>`;
@@ -539,6 +569,28 @@ function updateDOM() {
     
     UI.valModbusState.className = 'badge badge-success';
     UI.valModbusState.textContent = 'Bereit';
+
+    // Sensorboard-Verbindungsstatus
+    if (UI.valSensorConnection) {
+      if (state.sensorTimeout) {
+        UI.valSensorConnection.className = 'badge badge-error';
+        UI.valSensorConnection.textContent = 'Timeout!';
+      } else if (state.sensorAgeSec >= 0) {
+        UI.valSensorConnection.className = 'badge badge-success';
+        UI.valSensorConnection.textContent = `Verbunden (${state.sensorAgeSec}s)`;
+      } else {
+        UI.valSensorConnection.className = 'badge badge-inactive';
+        UI.valSensorConnection.textContent = 'Unbekannt';
+      }
+    }
+    if (UI.valHdState) {
+      UI.valHdState.className = state.hdAlarm ? 'badge badge-error' : 'badge badge-success';
+      UI.valHdState.textContent = state.hdAlarm ? 'ALARM!' : 'OK';
+    }
+    if (UI.valNdState) {
+      UI.valNdState.className = state.ndAlarm ? 'badge badge-error' : 'badge badge-success';
+      UI.valNdState.textContent = state.ndAlarm ? 'ALARM!' : 'OK';
+    }
   }
   
   // --- Settings View Update ---
@@ -560,15 +612,17 @@ function updateDOM() {
   if (state.disinfActive) {
     UI.disinfStatusBadge.className = `badge badge-${state.disinfStatus === 'failed' ? 'error' : 'warning'}`;
     let statText = 'Unbekannt';
-    if (state.disinfStatus === 'heating') statText = 'Heizt auf';
-    if (state.disinfStatus === 'holding') statText = 'Hält Temperatur';
-    if (state.disinfStatus === 'failed') statText = 'FEHLER: Timeout';
-    if (state.disinfStatus === 'completed') statText = 'Beendet';
+    if (state.disinfStatus === 'heating_wp')   statText = 'Heizt auf (Wärmepumpe)';
+    if (state.disinfStatus === 'heating_both') statText = 'Heizt auf (WP + Heizstab)';
+    if (state.disinfStatus === 'holding')      statText = 'Hält Temperatur';
+    if (state.disinfStatus === 'failed')       statText = 'FEHLER: Timeout';
+    if (state.disinfStatus === 'completed')    statText = 'Beendet';
     UI.disinfStatusBadge.textContent = statText;
     
     UI.disinfCurrentMetrics.style.display = 'block';
-    if (state.disinfStatus === 'heating') {
-      UI.disinfCurrentMetrics.textContent = `Aufheizphase: ${state.disinfElapsedMinutes} min vergangen (Max: ${state.disinfMaxTime} min)`;
+    if (state.disinfStatus === 'heating_wp' || state.disinfStatus === 'heating_both') {
+      const phaseLabel = state.disinfStatus === 'heating_both' ? 'WP + Heizstab' : 'Wärmepumpe';
+      UI.disinfCurrentMetrics.textContent = `Aufheizphase (${phaseLabel}): ${state.disinfElapsedMinutes} min vergangen (Max: ${state.disinfMaxTime} min)`;
     } else if (state.disinfStatus === 'holding') {
       const rest = state.disinfHold - state.disinfHoldMinutesElapsed;
       UI.disinfCurrentMetrics.textContent = `Haltedauer: Noch ${rest} von ${state.disinfHold} min verbleibend`;
@@ -581,10 +635,6 @@ function updateDOM() {
     UI.disinfStatusBadge.className = 'badge badge-inactive';
     UI.disinfStatusBadge.textContent = 'Inaktiv';
     UI.disinfCurrentMetrics.style.display = 'none';
-  }
-  
-  if (UI.inputModbusAddress && !formState.modbus.dirty) {
-    UI.inputModbusAddress.value = state.modbusAddress;
   }
 
   // --- Anlagen-Parameter BWWP Update ---
@@ -877,7 +927,7 @@ function initEvents() {
       formState.disinf.dirty = false;
       state.disinfActive = nextActiveState;
       if (state.disinfActive) {
-        state.disinfStatus = 'heating';
+        state.disinfStatus = 'heating_wp';
         state.disinfElapsedMinutes = 0;
         state.disinfHoldMinutesElapsed = 0;
         showToast('Legionellen-Desinfektion gestartet.', 'warning');
@@ -933,34 +983,6 @@ function initEvents() {
         }, 1000);
       });
   });
-  
-  // Settings Screen: Modbus Address Save Handler
-  if (UI.btnSaveModbus) {
-    UI.btnSaveModbus.addEventListener('click', () => {
-      const addr = parseInt(UI.inputModbusAddress.value);
-      if (addr >= 1 && addr <= 247) {
-        if (useLocalSimulation) {
-          state.modbusAddress = addr;
-          formState.modbus.dirty = false;
-          showToast('Modbus-Adresse in Simulation geändert.', 'success');
-          updateDOM();
-        } else {
-          postData('/api/modbus', { address: addr })
-            .then(res => {
-              if (res && res.status === 'ok') {
-                state.modbusAddress = addr;
-                formState.modbus.dirty = false;
-                showToast('Modbus-Adresse erfolgreich gespeichert.', 'success');
-                updateDOM();
-              }
-            });
-        }
-      } else {
-        UI.inputModbusAddress.value = state.modbusAddress;
-        showToast('Ungültige Adresse (1 - 247 zulässig).', 'error');
-      }
-    });
-  }
   
   // Settings Screen: Fan Intervals Save Handler
   if (UI.btnSaveFan) {
@@ -1076,10 +1098,6 @@ function initEvents() {
     UI.inputDisinfHold.addEventListener('input', () => markDirty('disinf'));
     UI.inputDisinfMaxTime.addEventListener('input', () => markDirty('disinf'));
   }
-  
-  if (UI.inputModbusAddress) {
-    UI.inputModbusAddress.addEventListener('input', () => markDirty('modbus'));
-  }
 
   if (UI.inputAnlageHysteresis) {
     UI.inputAnlageHysteresis.addEventListener('input',  () => markDirty('anlage'));
@@ -1095,7 +1113,6 @@ function initEvents() {
     if (document.hidden) {
       formState.fan.dirty = false;
       formState.disinf.dirty = false;
-      formState.modbus.dirty = false;
       formState.anlage.dirty = false;
       fetchStatus();
     }
@@ -1124,6 +1141,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initial Statusabruf vom ESP32
   fetchStatus();
   
-  // Regelmäßiger Abruf alle 2 Sekunden
+  // Regelmaessiger Abruf alle 2 Sekunden
   setInterval(fetchStatus, 2000);
+  // Sensorboard-Status alle 5 Sekunden
+  setInterval(fetchSensors, 5000);
 });

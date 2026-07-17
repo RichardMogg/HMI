@@ -1,0 +1,9 @@
+# ESP32-S3 Gateway - Feste Partitionstabelle (8MB Flash)
+# Verhindert Dateisystemverlust bei Firmware-Updates durch feste Adressen
+# LittleFS immer bei 0x670000, Firmware bis max 0x660000 (6.375MB Spielraum)
+#
+# Name,     Type, SubType,  Offset,    Size,     Flags
+nvs,        data, nvs,      0x9000,    0x5000,
+otadata,    data, ota,      0xe000,    0x2000,
+app0,       app,  ota_0,    0x10000,   0x660000,
+littlefs,   data, spiffs,   0x670000,  0x190000,

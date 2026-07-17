@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Waermepumpen-Gateway - ESP32-S3 (Waveshare ESP32-S3-RS485-CAN)
  * Rolle: Modbus RTU MASTER, WiFi AP, REST-API, Regler
  *
@@ -16,6 +16,7 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <ModbusRTU.h>
+#include <HTTPClient.h>   // Fuer Credentials-Push ans Sensorboard
 
 // -----------------------------------------------------------------------
 //  KONFIGURATION
@@ -51,6 +52,7 @@ DNSServer   dnsServer;
 const byte  DNS_PORT = 53;
 ModbusRTU   mb;
 String      apSSID, apPassword;
+String      sensorboardIP = "";   // IP des Sensorboards (automatisch aus POST /api/sensors erkannt)
 
 // -----------------------------------------------------------------------
 //  SYSTEMZUSTAND
@@ -104,6 +106,7 @@ struct HMIState {
 
 bool relayDesired[8] = {false};
 bool relayCurrent[8] = {false};
+bool coilHealthBuf[1] = {false};   // Puffer fuer Modbus Health-Check Read
 volatile bool mbBusy = false;
 int  mbSyncCh        = 0;
 
@@ -116,6 +119,15 @@ bool onMbDone(Modbus::ResultCode ev, uint16_t tid, void* data) {
   } else {
     state.modbusConnected = false;
     Serial.printf("[Relay] FEHLER K%d: 0x%02X\n", mbSyncCh + 1, (uint8_t)ev);
+  }
+  return true;
+}
+
+bool onMbHealthCheck(Modbus::ResultCode ev, uint16_t tid, void* data) {
+  mbBusy = false;
+  state.modbusConnected = (ev == Modbus::EX_SUCCESS);
+  if (!state.modbusConnected) {
+    Serial.printf("[Modbus] Health-Check FEHLER: 0x%02X - Relaisboard nicht erreichbar\n", (uint8_t)ev);
   }
   return true;
 }
@@ -219,6 +231,15 @@ void handleGetStatus() {
   doc["disinfHold"]    = state.disinfHold;
   doc["disinfMaxTime"] = state.disinfMaxTime;
   doc["disinfStatus"]  = state.disinfStatus;
+  // Verstrichene Minuten fuer die HMI-Fortschrittsanzeige
+  if (state.disinfActive) {
+    doc["disinfElapsedMinutes"]     = (int)((millis() - state.disinfStart) / 60000UL);
+    doc["disinfHoldMinutesElapsed"] = (strcmp(state.disinfStatus, "holding") == 0)
+                                      ? (int)((millis() - state.disinfHoldStart) / 60000UL) : 0;
+  } else {
+    doc["disinfElapsedMinutes"]     = 0;
+    doc["disinfHoldMinutesElapsed"] = 0;
+  }
   JsonArray relays = doc["relays"].to<JsonArray>();
   for (int i = 0; i < 8; i++) relays.add(relayDesired[i]);
   String r; serializeJson(doc, r);
@@ -267,6 +288,11 @@ void handleGetRelays() {
 // POST /api/sensors - WROOM-32 sendet: tempWarmwasser, tempVerdampfer, hdRaw, ndRaw
 // hdRaw/ndRaw = roher GPIO-Level (true=HIGH, false=LOW)
 void handlePostSensors() {
+  // Sensorboard-IP automatisch merken (fuer spaetere Credentials-Uebertragung)
+  String clientIP = server.client().remoteIP().toString();
+  if (clientIP.length() > 0 && clientIP != "0.0.0.0") {
+    sensorboardIP = clientIP;
+  }
   if (!server.hasArg("plain")) { server.send(400,"application/json","{\"status\":\"error\"}"); return; }
   JsonDocument doc;
   if (deserializeJson(doc, server.arg("plain"))) { server.send(400,"application/json","{\"status\":\"json_error\"}"); return; }
@@ -408,8 +434,32 @@ void handlePostWifi() {
   if (server.hasArg("plain")) {
     JsonDocument doc; deserializeJson(doc, server.arg("plain"));
     if (doc.containsKey("ssid")&&doc.containsKey("password")) {
+      String newSsid = doc["ssid"].as<String>();
+      String newPass = doc["password"].as<String>();
+
+      // Zwei-Phasen-Commit: Credentials zuerst ans Sensorboard pushen
+      if (sensorboardIP.length() > 0) {
+        HTTPClient http;
+        String url = "http://" + sensorboardIP + "/api/config";
+        http.begin(url);
+        http.addHeader("Content-Type", "application/json");
+        http.setTimeout(3000);
+        JsonDocument payload;
+        payload["ssid"]     = newSsid;
+        payload["password"] = newPass;
+        String body; serializeJson(payload, body);
+        int code = http.POST(body);
+        http.end();
+        Serial.printf("[WiFi] Sensorboard-Credentials gepusht: HTTP %d (IP: %s)\n",
+                      code, sensorboardIP.c_str());
+      } else {
+        Serial.println("[WiFi] WARNUNG: Sensorboard-IP unbekannt - Push uebersprungen!");
+      }
+
+      // Eigene Credentials speichern und Neustart
       preferences.begin("hmi_gateway",false);
-      preferences.putString("ssid",doc["ssid"].as<String>()); preferences.putString("password",doc["password"].as<String>());
+      preferences.putString("ssid", newSsid);
+      preferences.putString("password", newPass);
       preferences.end();
       server.send(200,"application/json","{\"status\":\"rebooting\"}");
       delay(1500); ESP.restart(); return;
@@ -635,10 +685,9 @@ void setup() {
   Serial.printf("[Boot] Soll=%.1f, Hyst=%.1f, HD=%s, ND=%s\n",
     state.setpoint, state.hysteresis, state.hdMode.c_str(), state.ndMode.c_str());
 
-  if (!LittleFS.begin(true)) Serial.println("[Boot] LittleFS FEHLER!");
-  else                       Serial.println("[Boot] LittleFS OK.");
+  if (!LittleFS.begin(false)) Serial.println("[Boot] LittleFS FEHLER! -> 'uploadfs' ausfuehren!");
 
-  if (useFailsafe) { apSSID="Gateway-AP"; apPassword="failsafepw"; }
+  if (useFailsafe) { apSSID="Waermepumpe-Gateway-AP-FAILSAFE"; apPassword="failsafepw"; }
   WiFi.softAP(apSSID.c_str(), apPassword.c_str());
   Serial.printf("[WiFi] AP '%s' | IP: %s\n", apSSID.c_str(), WiFi.softAPIP().toString().c_str());
 
@@ -682,6 +731,15 @@ void loop() {
 
   mb.task();
   syncRelays();
+
+  // Modbus Health-Check alle 10 Sekunden (prueft Relaisboard-Erreichbarkeit
+  // auch wenn keine Relay-Aenderung ansteht)
+  static unsigned long lastMbHealthMs = 0;
+  if (!mbBusy && millis() - lastMbHealthMs >= 10000) {
+    lastMbHealthMs = millis();
+    mbBusy = true;
+    mb.readCoil(RELAY_SLAVE_ID, 0, coilHealthBuf, 1, onMbHealthCheck);
+  }
 
   static unsigned long lastControl=0;
   if (millis()-lastControl>=1000) {

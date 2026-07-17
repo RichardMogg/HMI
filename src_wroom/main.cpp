@@ -23,14 +23,17 @@
 #include <ArduinoJson.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <WebServer.h>    // Konfigurationsserver fuer /api/config
+#include <Preferences.h>  // NVS-Persistenz fuer WiFi-Credentials
 
 // -----------------------------------------------------------------------
 //  KONFIGURATION
 // -----------------------------------------------------------------------
 
-// S3 Access Point (muss mit NVS-Einstellungen auf dem S3 uebereinstimmen)
-const char* WIFI_SSID     = "Waermepumpe-Gateway-AP";
-const char* WIFI_PASSWORD = "testpassword123";
+// S3 Access Point - Zugangsdaten werden beim Start aus NVS geladen (Default als Fallback)
+// Koennen per POST /api/config (vom Gateway) dauerhaft ohne Reflashing aktualisiert werden
+String wifiSsid     = "Waermepumpe-Gateway-AP";  // Default-Fallback
+String wifiPassword = "testpassword123";          // Default-Fallback
 
 // S3 IP-Adresse (AP-Standard)
 const char* S3_IP         = "192.168.4.1";
@@ -55,6 +58,7 @@ OneWire           ow_ww(PIN_DS18B20_WW);
 OneWire           ow_vd(PIN_DS18B20_VD);
 DallasTemperature ds_ww(&ow_ww);
 DallasTemperature ds_vd(&ow_vd);
+WebServer         cfgServer(80);  // Konfigurationsserver fuer /api/config (Port 80)
 
 // -----------------------------------------------------------------------
 //  GLOBALE VARIABLEN
@@ -72,14 +76,46 @@ unsigned long lastWifiRetryMs     = 0;
 bool          wifiConnected       = false;
 
 // -----------------------------------------------------------------------
+//  KONFIGURATION PER HTTP (POST /api/config)
+//  Gateway sendet neue WiFi-Zugangsdaten vor seinem eigenen Neustart
+// -----------------------------------------------------------------------
+
+void handlePostConfig() {
+  if (!cfgServer.hasArg("plain")) {
+    cfgServer.send(400, "application/json", "{\"status\":\"error\"}");
+    return;
+  }
+  JsonDocument doc;
+  if (deserializeJson(doc, cfgServer.arg("plain"))) {
+    cfgServer.send(400, "application/json", "{\"status\":\"json_error\"}");
+    return;
+  }
+  String newSsid = doc["ssid"].as<String>();
+  String newPass = doc["password"].as<String>();
+  if (newSsid.length() == 0 || newPass.length() < 8) {
+    cfgServer.send(400, "application/json", "{\"status\":\"invalid\"}");
+    return;
+  }
+  Preferences prefs;
+  prefs.begin("wb_wifi", false);
+  prefs.putString("ssid",     newSsid);
+  prefs.putString("password", newPass);
+  prefs.end();
+  Serial.printf("[Config] Neue WiFi-Daten gespeichert: SSID='%s' - Neustart...\n", newSsid.c_str());
+  cfgServer.send(200, "application/json", "{\"status\":\"ok\"}");
+  delay(500);
+  ESP.restart();
+}
+
+// -----------------------------------------------------------------------
 //  WiFi VERBINDUNG
 // -----------------------------------------------------------------------
 
 void connectWifi() {
   if (WiFi.status() == WL_CONNECTED) { wifiConnected = true; return; }
 
-  Serial.printf("[WiFi] Verbinde mit '%s'...\n", WIFI_SSID);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.printf("[WiFi] Verbinde mit '%s'...\n", wifiSsid.c_str());
+  WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
 
   // Warte max. 10 Sekunden
   int tries = 0;
@@ -186,6 +222,22 @@ void setup() {
   delay(1000);
   Serial.println("\n=== Sensorboard ESP32-WROOM-32 ===");
 
+  // WiFi-Zugangsdaten aus NVS laden (falls vom Gateway per /api/config gesetzt)
+  {
+    Preferences prefs;
+    prefs.begin("wb_wifi", true);
+    String storedSsid = prefs.getString("ssid", "");
+    String storedPass = prefs.getString("password", "");
+    prefs.end();
+    if (storedSsid.length() > 0 && storedPass.length() >= 8) {
+      wifiSsid     = storedSsid;
+      wifiPassword = storedPass;
+      Serial.printf("[Config] WiFi-Zugangsdaten aus NVS geladen: SSID='%s'\n", wifiSsid.c_str());
+    } else {
+      Serial.println("[Config] Kein NVS-Eintrag - verwende Default-Zugangsdaten.");
+    }
+  }
+
   // Druckschalter-Pins konfigurieren (INPUT_PULLUP: LOW=Kontakt geschlossen, HIGH=offen)
   pinMode(PIN_HD_SCHALTER, INPUT_PULLUP);
   pinMode(PIN_ND_SCHALTER, INPUT_PULLUP);
@@ -196,14 +248,19 @@ void setup() {
   ds_ww.begin();
   ds_vd.begin();
 
+  // Konfigurationsserver starten (nimmt WiFi-Updates vom Gateway entgegen)
+  cfgServer.on("/api/config", HTTP_POST, handlePostConfig);
+  cfgServer.begin();
+  Serial.println("[Config] Konfigurationsserver auf Port 80 gestartet.");
+
   // Sensoranzahl pruefen
   int countWW = ds_ww.getDeviceCount();
   int countVD = ds_vd.getDeviceCount();
   Serial.printf("[DS18B20] Warmwasser: %d Sensor(en) gefunden\n", countWW);
   Serial.printf("[DS18B20] Verdampfer: %d Sensor(en) gefunden\n", countVD);
 
-  if (countWW == 0) Serial.println("[DS18B20] WARNUNG: Kein Warmwasser-Sensor auf GPIO 25!");
-  if (countVD == 0) Serial.println("[DS18B20] WARNUNG: Kein Verdampfer-Sensor auf GPIO 26!");
+  if (countWW == 0) Serial.printf("[DS18B20] WARNUNG: Kein Warmwasser-Sensor auf GPIO %d!\n", PIN_DS18B20_WW);
+  if (countVD == 0) Serial.printf("[DS18B20] WARNUNG: Kein Verdampfer-Sensor auf GPIO %d!\n", PIN_DS18B20_VD);
 
   // WiFi verbinden
   WiFi.mode(WIFI_STA);
@@ -228,6 +285,7 @@ void setup() {
 // -----------------------------------------------------------------------
 
 void loop() {
+  cfgServer.handleClient();  // Konfigurationsserver bedienen (WiFi-Updates vom Gateway)
   unsigned long now = millis();
 
   // WiFi-Verbindung pruefen / wiederherstellen

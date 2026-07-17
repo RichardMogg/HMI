@@ -183,9 +183,14 @@
             <div style="margin-top: 8px;">
               <span id="modbus-badge" class="badge badge-success">Modbus RTU OK</span>
             </div>
-            <div class="card-footer">Kommunikation mit Arduino OPTA</div>
+            <div class="card-footer">Kommunikation mit Waveshare 8-Kanal Relaisboard (Modbus RTU)</div>
           </div>
 
+        </div>
+
+        <!-- Alarm-Banner: HD/ND-Alarm und Sensor-Timeout (wird per JS eingeblendet) -->
+        <div id="alarm-banner" style="display:none; background: rgba(239,68,68,0.12); border: 1px solid var(--color-error); border-radius: 10px; padding: 12px 16px; margin-top: 16px; width: 100%; box-sizing: border-box; align-items: center; gap: 10px; font-weight: 600; color: var(--color-error); font-size: 0.9rem;">
+          ⚠️ <span id="alarm-text"></span>
         </div>
 
       </div>
@@ -234,6 +239,31 @@
             </span>
             <span id="val-modbus-state" class="badge badge-success">Bereit</span>
           </div>
+
+          <div class="values-row">
+            <span class="values-label">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary);"></span>
+              Sensorboard Verbindung
+            </span>
+            <span id="val-sensor-connection" class="badge badge-inactive">Unbekannt</span>
+          </div>
+
+          <div class="values-row">
+            <span class="values-label">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary);"></span>
+              Druckschalter Hochdruck (HD)
+            </span>
+            <span id="val-hd-state" class="badge badge-success">OK</span>
+          </div>
+
+          <div class="values-row">
+            <span class="values-label">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary);"></span>
+              Druckschalter Niederdruck (ND)
+            </span>
+            <span id="val-nd-state" class="badge badge-success">OK</span>
+          </div>
+
         </div>
       </div>
 
@@ -340,7 +370,7 @@
                 </div>
               </div>
               <button id="btn-save-fan" class="btn-primary" style="margin-top: 12px; width: 100%;">Einstellungen speichern</button>
-              <div class="card-footer">Werte werden direkt an die SPS übertragen (Holding-Register 40006, 40007 und 40008).</div>
+              <div class="card-footer">Werte werden persistent im Flash-Speicher (NVS) des Gateways gespeichert und steuern den Lüfterzyklus.</div>
             </div>
           </div>
 
@@ -387,7 +417,7 @@
                 </div>
               </div>
               <button id="btn-save-anlage" class="btn-primary" style="margin-top: 12px; width: 100%;">Einstellungen speichern</button>
-              <div class="card-footer">Werte werden persistent im Flash-Speicher abgelegt und via Modbus-Register 40009–40014 an die SPS übertragen.</div>
+              <div class="card-footer">Werte werden persistent im Flash-Speicher (NVS) des Gateways abgelegt und steuern die Kompressor-Regelung.</div>
             </div>
           </div>
 
@@ -451,7 +481,7 @@
           </form>
           
           <div class="card-footer" style="margin-top: 20px;">
-            ⚠️ Nach dem Speichern startet der ESP32 den Access Point neu. Sie werden getrennt und müssen sich neu mit den neuen Zugangsdaten verbinden.
+            ⚠️ Die neuen Zugangsdaten werden automatisch an das Sensorboard übertragen. Anschließend starten beide Geräte neu &ndash; verbinden Sie sich danach mit der neuen SSID.
           </div>
         </div>
       </div>
@@ -462,33 +492,15 @@
         
         <div class="service-grid">
           
-          <!-- Card: Modbus RTU Einstellungen -->
+          <!-- Card: Modbus RTU Register-Diagnose (Interner Systemzustand) -->
           <div class="card collapsible collapsed">
             <div class="card-header">
-              <h3 class="card-title">Modbus RTU Gateway</h3>
-              <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
-            </div>
-            <div class="card-content">
-              <div class="form-group" style="margin-top: 10px;">
-                <label for="input-modbus-address">Modbus Slave-Adresse (1 - 247)</label>
-                <div style="display: flex; gap: 10px;">
-                  <input type="number" id="input-modbus-address" class="input-control" min="1" max="247" value="1" style="flex-grow: 1;">
-                  <button id="btn-save-modbus" class="btn-primary" style="width: auto; padding: 0 20px;">Speichern</button>
-                </div>
-              </div>
-              <div class="card-footer">Die SPS kommuniziert mit dem Gateway über diese Slave-ID.</div>
-            </div>
-          </div>
-
-          <!-- Card: Modbus RTU Register-Diagnose (Punkt 2) -->
-          <div class="card collapsible collapsed">
-            <div class="card-header">
-              <h3 class="card-title">Modbus RTU Register-Diagnose</h3>
+              <h3 class="card-title">Systemzustand-Diagnose</h3>
               <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
             </div>
             <div class="card-content">
               <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.4; margin-top: -6px;">
-                Aktuelle Live-Werte der Modbus-Register im Speicher des ESP32-Gateways (Aktualisierung alle 2 Sekunden).
+                Interner Systemzustand des Gateways (Aktualisierung alle 2 Sekunden). Rein diagnostisch &ndash; der Gateway implementiert keinen externen Modbus-Slave.
               </p>
               <div style="overflow-x: auto; margin-top: 12px;">
                 <table class="diagnostic-table">
