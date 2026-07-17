@@ -1,12 +1,15 @@
-﻿/*
- * Sensorboard - ESP32-WROOM-32
+/*
+ * Sensorboard - ESP32-S3-N16R8
  * Rolle: Temperaturen und Druckschalter messen, per HTTP an S3 senden
  *
  * Hardware:
- *  - DS18B20 Sonde #1 (Warmwasser)  -> GPIO 25 + 4.7kOhm Pull-up nach 3.3V
- *  - DS18B20 Sonde #2 (Verdampfer)  -> GPIO 26 + 4.7kOhm Pull-up nach 3.3V
- *  - Hochdruck-Schalter (HD)        -> GPIO 32, andere Seite GND (INPUT_PULLUP)
- *  - Niederdruck-Schalter (ND)      -> GPIO 33, andere Seite GND (INPUT_PULLUP)
+ *  - DS18B20 Sonde #1 (Warmwasser)  -> GPIO 4  + 4.7kOhm Pull-up nach 3.3V
+ *  - DS18B20 Sonde #2 (Verdampfer)  -> GPIO 5  + 4.7kOhm Pull-up nach 3.3V
+ *  - Hochdruck-Schalter (HD)        -> GPIO 6, andere Seite GND (INPUT_PULLUP)
+ *  - Niederdruck-Schalter (ND)      -> GPIO 7, andere Seite GND (INPUT_PULLUP)
+ *
+ * HINWEIS ESP32-S3-N16R8: GPIO 26-37 sind intern fuer OctalSPI Flash/PSRAM
+ * reserviert und duerfen NICHT als allgemeine IO verwendet werden!
  *
  * Kommunikation:
  *  - Verbindet sich als WiFi-Client mit dem S3-AP
@@ -34,10 +37,10 @@ const char* S3_IP         = "192.168.4.1";
 const char* SENSORS_URL   = "http://192.168.4.1/api/sensors";
 
 // GPIO-Pins
-#define PIN_DS18B20_WW   25   // DS18B20 Warmwasser-Sonde
-#define PIN_DS18B20_VD   26   // DS18B20 Verdampfer-Sonde
-#define PIN_HD_SCHALTER  32   // Hochdruck-Schalter (INPUT_PULLUP, Trockenkontakt nach GND)
-#define PIN_ND_SCHALTER  33   // Niederdruck-Schalter (INPUT_PULLUP, Trockenkontakt nach GND)
+#define PIN_DS18B20_WW    4   // DS18B20 Warmwasser-Sonde  (sicher auf N16R8)
+#define PIN_DS18B20_VD    5   // DS18B20 Verdampfer-Sonde  (sicher auf N16R8)
+#define PIN_HD_SCHALTER   6   // Hochdruck-Schalter (INPUT_PULLUP, Trockenkontakt nach GND)
+#define PIN_ND_SCHALTER   7   // Niederdruck-Schalter (INPUT_PULLUP, Trockenkontakt nach GND)
 
 // Intervalle
 #define SEND_INTERVAL_MS   5000   // ms - normaler Sendeintervall
@@ -186,7 +189,8 @@ void setup() {
   // Druckschalter-Pins konfigurieren (INPUT_PULLUP: LOW=Kontakt geschlossen, HIGH=offen)
   pinMode(PIN_HD_SCHALTER, INPUT_PULLUP);
   pinMode(PIN_ND_SCHALTER, INPUT_PULLUP);
-  Serial.printf("[GPIO] HD=GPIO%d ND=GPIO%d (INPUT_PULLUP)\n", PIN_HD_SCHALTER, PIN_ND_SCHALTER);
+  Serial.printf("[GPIO] WW=GPIO%d VD=GPIO%d HD=GPIO%d ND=GPIO%d (INPUT_PULLUP auf HD/ND)\n",
+                PIN_DS18B20_WW, PIN_DS18B20_VD, PIN_HD_SCHALTER, PIN_ND_SCHALTER);
 
   // DS18B20 Sensoren initialisieren
   ds_ww.begin();
