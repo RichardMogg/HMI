@@ -248,11 +248,6 @@ void setup() {
   ds_ww.begin();
   ds_vd.begin();
 
-  // Konfigurationsserver starten (nimmt WiFi-Updates vom Gateway entgegen)
-  cfgServer.on("/api/config", HTTP_POST, handlePostConfig);
-  cfgServer.begin();
-  Serial.println("[Config] Konfigurationsserver auf Port 80 gestartet.");
-
   // Sensoranzahl pruefen
   int countWW = ds_ww.getDeviceCount();
   int countVD = ds_vd.getDeviceCount();
@@ -265,6 +260,11 @@ void setup() {
   // WiFi verbinden
   WiFi.mode(WIFI_STA);
   connectWifi();
+
+  // Konfigurationsserver starten (nimmt WiFi-Updates vom Gateway entgegen)
+  cfgServer.on("/api/config", HTTP_POST, handlePostConfig);
+  cfgServer.begin();
+  Serial.println("[Config] Konfigurationsserver auf Port 80 gestartet.");
 
   // Initialen Zustand der Druckschalter lesen
   hdPinState     = readPinDebounced(PIN_HD_SCHALTER);

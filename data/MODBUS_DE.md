@@ -1,154 +1,272 @@
-# Dokumentation der Modbus-Schnittstelle & Service-Schicht
+# WP-HMI Gateway: Schnittstellen, Modbus und Serviceebene
 
-Dieses Dokument beschreibt die Architektur der Service-Schicht des ESP32-S3 HMI-Gateways und spezifiziert die Register-Tabelle für die Modbus-RTU-Kommunikation mit der **Arduino OPTA RS485 SPS** (Master).
+Diese Datei beschreibt den aktuellen Stand des Projekts. Das ESP32-S3 Gateway
+arbeitet nicht mehr als Modbus-Slave fuer eine SPS, sondern als lokaler
+Webserver, Regler und Modbus-RTU-Master fuer ein Waveshare 8-Kanal-Relaisboard.
 
----
-
-## 1. Systemarchitektur & Datenfluss
-
-Das Gateway verbindet das lokale Web-HMI (Browser/Smartphone) drahtlos mit der Steuerungsebene (SPS) über RS485. 
+## 1. Systemueberblick
 
 ```text
-[ Web-HMI (Browser) ]
-       │  ▲
-       │  │ HTTP JSON-Anfragen (Polling alle 2 Sek.)
-       ▼  │
-[ ESP32 Webserver (/api/status, /api/setpoint) ]
-       │  ▲
-       │  │ liest/schreibt
-       ▼  │
-[ Zentrale C++ Datenstruktur: struct HMIState state ] ─── (Preferences / NVS)
-       │  ▲
-       │  │ bidirektionale Synchronisation (syncModbusRegisters)
-       ▼  │
-[ Modbus RTU Register-Speicher (mb-Objekt) ]
-       │  ▲
-       │  │ RS485 Protokoll-Frames
-       ▼  │
-[ Physikalische RS485-Leitungen (A / B) ]
-       │  ▲
-       ▼  │
-[ Arduino OPTA RS485 SPS (Modbus Master) ]
+[ Web-HMI / Smartphone ]
+          |
+          | HTTP JSON + statische Dateien aus LittleFS
+          v
+[ ESP32-S3 Gateway ]
+          |
+          | interner Regler, REST-API, NVS-Settings
+          |
+          +-- WiFi Access Point / Captive Portal
+          |
+          +-- HTTP POST /api/sensors
+          |       ^
+          |       |
+          |  [ Sensorboard ESP32-S3-N16R8 ]
+          |    - DS18B20 Warmwasser
+          |    - DS18B20 Verdampfer
+          |    - HD/ND-Druckschalter
+          |
+          +-- Modbus RTU Master, 9600 8N1
+                  |
+                  v
+             [ Waveshare 8-Ch Modbus RTU Relay Board, Slave ID 1 ]
 ```
 
----
+## 2. Gateway-Aufgaben
 
-## 2. Modbus-Register-Spezifikation (Register-Map)
+Das Gateway in `src/main.cpp` uebernimmt:
 
-Der ESP32 arbeitet als **Modbus-Slave (Server)**. Die standardmäßige Slave-ID (Adresse) ist im Web-HMI unter den Einstellungen konfigurierbar und wird im Flash-Speicher (`Preferences`) gesichert (Werkseinstellung: `1`).
+- WLAN Access Point mit Captive Portal
+- Webserver fuer die HMI-Dateien aus `data/`
+- REST-API fuer HMI, Sensorboard und Einstellungen
+- Persistenz ueber `Preferences`/NVS
+- Modbus-RTU-Master fuer das Relaisboard
+- Kompressor-, Luefter- und Heizstabregelung
+- Sicherheitskette fuer Sensor-Timeout, Hochdruck und Niederdruck
+- Failsafe-WLAN per Double-Reset
 
-### Register-Tabelle
+## 3. Hardware und Schnittstellen
 
-| Modbus-Adresse | Register-Typ | Datentyp | Skalierung | Beschreibung | Wertebereich |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** (Coil) | Read-Write | Boolean | 1:1 | **Hauptschalter Wärmepumpe**<br>0 = Aus, 1 = Ein | 0 oder 1 |
-| **2** (Coil) | Read-Write | Boolean | 1:1 | **Legionellen-Desinfektion**<br>0 = Inaktiv, 1 = Aktiviert | 0 oder 1 |
-| **30001** (Input Reg) | Read-Only | Float | **10.0** | **Warmwasser-Isttemperatur**<br>Übertragen als Ganzzahl ($Wert \times 10$) | 5.0 °C bis 80.0 °C<br>(50 bis 800) |
-| **30002** (Input Reg) | Read-Only | Float | **10.0** | **Verdampfertemperatur**<br>Übertragen als Ganzzahl ($Wert \times 10$) | -20.0 °C bis 50.0 °C<br>(-200 bis 500) |
-| **30003** (Input Reg) | Read-Only | Integer | 1:1 | **Lüfter-Status**<br>0 = Aus, 1 = Niedrig, 2 = Hoch | 0 bis 2 |
-| **30004** (Input Reg) | Read-Only | Boolean | 1:1 | **Zusatzheizung Status (Heizstab)**<br>0 = Aus, 1 = Aktiviert | 0 oder 1 |
-| **40001** (Holding Reg) | Read-Write | Float | **10.0** | **Warmwasser-Sollwert**<br>Übertragen als Ganzzahl ($Wert \times 10$) | 5.0 °C bis 60.0 °C<br>(50 bis 600) |
-| **40002** (Holding Reg) | Read-Write | Integer | 1:1 | **Betriebsmodus**<br>0 = Eco (WP)<br>1 = Hybrid (WP+Heizstab)<br>2 = Notbetrieb (Heizstab)<br>3 = Extern (Gas/Holz)<br>4 = WP + Extern | 0 bis 4 |
-| **40003** (Holding Reg) | Read-Write | Integer | 1:1 | **Desinfektions-Zieltemperatur** in °C | 60 bis 70 °C |
-| **40004** (Holding Reg) | Read-Write | Integer | 1:1 | **Desinfektions-Haltedauer** in Minuten | 30 bis 180 Min |
-| **40005** (Holding Reg) | Read-Write | Integer | 1:1 | **Desinfektion: Maximale Aufheizzeit** in Min. | 60 bis 360 Min |
-| **40006** (Holding Reg) | Read-Write | Integer | 1:1 | **Lüfter: Einschaltzeit** in Minuten | 1 bis 1440 Min |
-| **40007** (Holding Reg) | Read-Write | Integer | 1:1 | **Lüfter: Pausezeit** in Minuten | 1 bis 1440 Min |
-| **40008** (Holding Reg) | Read-Write | Integer | 1:1 | **Lüfter: Solldrehzahl**<br>1 = Niedrig, 2 = Hoch | 1 oder 2 |
+### ESP32-S3 Gateway
 
----
+Aktuelle RS485-Pins im Code:
 
-## 3. Funktionsweise der Service-Schicht (`src/main.cpp`)
+| Funktion | GPIO |
+| --- | ---: |
+| RS485 TX | 17 |
+| RS485 RX | 18 |
+| RS485 DE/RE | 21 |
 
-Die Service-Schicht deklariert die Schnittstelle als tabellarische Struktur `regTable[]`:
+Serielle Parameter:
 
-```cpp
-struct ModbusRegister {
-  uint16_t address;   // Modbus-Registeradresse
-  RegType regType;     // TYPE_COIL, TYPE_IREG, TYPE_HREG
-  ValType valType;     // VAL_BOOL, VAL_INT, VAL_FLOAT
-  void* varPtr;       // Speicheradresse der lokalen Variable in "state"
-  float scale;        // Multiplikationsfaktor für Gleitkommazahlen
-  uint16_t lastValue; // Letzter synchronisierter Wert zur Änderungserkennung
-};
+| Parameter | Wert |
+| --- | --- |
+| Baudrate | 9600 |
+| Datenbits | 8 |
+| Paritaet | None |
+| Stoppbits | 1 |
+| Modbus-Rolle | Master |
+| Relaisboard Slave-ID | 1 |
+
+### Sensorboard ESP32-S3-N16R8
+
+Aktuelle Sensorboard-Pins im Code:
+
+| Funktion | GPIO |
+| --- | ---: |
+| DS18B20 Warmwasser | 4 |
+| DS18B20 Verdampfer | 5 |
+| Hochdruck-Schalter HD | 6 |
+| Niederdruck-Schalter ND | 7 |
+
+GPIO 26 bis 37 sind beim ESP32-S3-N16R8 intern fuer OctalSPI Flash/PSRAM
+reserviert und duerfen nicht als normale IOs verwendet werden.
+
+## 4. Relaisbelegung
+
+Das Gateway schreibt Modbus-Coils auf dem Waveshare 8-Kanal-Relaisboard. Die
+Coil-Adressen sind 0-basiert.
+
+| Relais | Coil | Funktion |
+| --- | ---: | --- |
+| K1 | 0 | Kompressor |
+| K2 | 1 | Heizstab |
+| K3 | 2 | Luefter niedrig |
+| K4 | 3 | Luefter hoch |
+| K5 | 4 | Magnetventil |
+| K6 | 5 | Reserve |
+| K7 | 6 | Reserve |
+| K8 | 7 | Reserve |
+
+Die Firmware fuehrt `relayDesired[]` und `relayCurrent[]`. `syncRelays()` sendet
+immer nur die naechste notwendige Aenderung per `writeCoil()`. Alle 10 Sekunden
+prueft ein `readCoil()`-Health-Check, ob das Relaisboard erreichbar ist.
+
+## 5. REST-API des Gateways
+
+### Lesen
+
+| Methode | Pfad | Zweck |
+| --- | --- | --- |
+| GET | `/api/status` | Gesamtstatus fuer Web-HMI |
+| GET | `/api/sensors` | Sensorwerte, Validitaet und Alter |
+| GET | `/api/sensors/config` | HD/ND-Modus (`NC` oder `NO`) |
+| GET | `/api/relays` | Desired/Current-Zustand der 8 Relais |
+
+### Schreiben
+
+| Methode | Pfad | Zweck |
+| --- | --- | --- |
+| POST | `/api/sensors` | Sensorboard sendet Temperatur und HD/ND-Rohpegel |
+| POST | `/api/sensors/config` | Service-Konfiguration fuer HD/ND (`NC`/`NO`) |
+| POST | `/api/setpoint` | Warmwasser-Sollwert setzen |
+| POST | `/api/power` | Anlage ein-/ausschalten |
+| POST | `/api/mode` | Betriebsmodus speichern |
+| POST | `/api/disinfection` | Legionellenprogramm starten/stoppen und Parameter speichern |
+| POST | `/api/fan` | Luefter-Zeitzyklus speichern |
+| POST | `/api/anlage` | Anlagenparameter speichern |
+| POST | `/api/wifi` | AP-Zugangsdaten speichern, Sensorboard informieren, Neustart |
+
+## 6. Sensorboard-Datenfluss
+
+Das Sensorboard verbindet sich als WiFi-Client mit dem Gateway-AP und sendet an
+`http://192.168.4.1/api/sensors`.
+
+Gesendet wird JSON mit:
+
+```json
+{
+  "tempWarmwasser": 48.5,
+  "tempVerdampfer": 7.2,
+  "hdRaw": true,
+  "ndRaw": true
+}
 ```
 
-### Der Synchronisations-Mechanismus (`syncModbusRegisters()`)
-Die Synchronisation läuft zyklisch in der Hauptschleife ab:
-1. **Lese-Register (Inputs `30001 - 30004`):** Der ESP32 liest die Werte aus der Struktur `state` aus, multipliziert sie ggf. mit der Skalierung (z.B. Temperatur $\times 10$) und schreibt sie in den Modbus-Speicher.
-2. **Schreib-Register (Coils & Holdings):**
-   * **Fall A (Änderung durch SPS):** Wenn die SPS ein Register überschreibt, ändert sich der Wert im Modbus-Speicher. Die Funktion erkennt, dass dieser Wert von `lastValue` abweicht, konvertiert ihn zurück (z.B. Division durch 10) und schreibt ihn in die `state`-Struktur. Das Web-HMI zeigt den neuen Wert beim nächsten Polling an.
-   * **Fall B (Änderung durch Web-HMI):** Ändert der Nutzer einen Wert über das Smartphone, schreibt die Web-API den neuen Wert in die `state`-Struktur. Die Synchronisations-Schleife bemerkt die Abweichung zu `lastValue` und aktualisiert das Modbus-Register für die SPS.
+Das Gateway interpretiert `hdRaw` und `ndRaw` je nach konfiguriertem Modus:
 
----
+- `NC`: Kontakt gilt als OK, wenn der Rohpegel `LOW` ist.
+- `NO`: Kontakt gilt als OK, wenn der Rohpegel `HIGH` ist.
 
-## 4. Anleitung zur Erweiterung (Schritt-für-Schritt)
+Das Sensorboard sendet zyklisch alle 5 Sekunden. Bei einer Aenderung eines
+Druckschalters wird sofort gesendet.
 
-Wenn du ein neues Register hinzufügen möchtest (z. B. einen **Wasserdruck-Sensor** mit Kommastelle als Register `30005`):
+## 7. Regelung
 
-1. **Variable definieren:**
-   Füge der Struktur `HMIState` in `src/main.cpp` die Variable hinzu:
-   ```cpp
-   float waterPressure = 1.5; // Wasserdruck in bar
-   ```
+### Normalbetrieb
 
-2. **Register mappen:**
-   Füge der Tabelle `regTable` in `src/main.cpp` eine neue Zeile hinzu:
-   ```cpp
-   { 30005, TYPE_IREG, VAL_FLOAT, &state.waterPressure, 10.0, 0 }
-   ```
-   *Fertig! Die Service-Schicht liest nun das Register 30005 über Modbus ein, teilt es durch 10.0 und schreibt das Ergebnis in `state.waterPressure`.*
+`runNormalControl()` startet den Kompressor, wenn:
 
-3. **Im Web-HMI anzeigen (optional):**
-   Erweitere das HTML ([data/index.html](file:///C:/Users/r.mogg/Documents/GitHub/HMI/data/index.html)) und JS ([data/js/app.js](file:///C:/Users/r.mogg/Documents/GitHub/HMI/data/js/app.js)), um den Wert `state.waterPressure` im Interface darzustellen.
+- die Anlage eingeschaltet ist,
+- gueltige Sensordaten vorliegen,
+- kein HD/ND-Alarm aktiv ist,
+- die Mindeststillstandszeit erfuellt ist,
+- `Warmwasser < Sollwert - Hysterese`,
+- die Verdampfer-/Lufttemperatur mindestens `minAirTemp` erreicht.
 
----
+Der Kompressor wird erst abgeschaltet, wenn die Mindestlaufzeit abgelaufen ist
+und der Sollwert erreicht wurde.
 
-## 5. Hardware- & Verbindungseinstellungen
+### Kompressor-Sequenz
 
-### Serial-Parameter
-* **Baudrate:** 9600 Baud
-* **Datenbits:** 8
-* **Parität:** Keine (None)
-* **Stoppbits:** 1
-* **Flusssteuerung (Flow Control):** Keine (Modbus RTU Standard)
+`kompressorSoll()` nutzt eine kleine State Machine:
 
-### ESP32-S3 Pinbelegung
-* **GPIO 16:** RXD (Verbindung zu RO des RS485-Treiberbausteins)
-* **GPIO 17:** TXD (Verbindung zu DI des RS485-Treiberbausteins)
-* **GPIO 4:** DE_RE (Verbindung zu DE/RE Pins des Transceivers zur Umschaltung Senden/Empfangen)
+```text
+KOMP_IDLE -> KOMP_VALVE_OPEN -> KOMP_RUNNING -> KOMP_VALVE_CLOSE -> KOMP_IDLE
+```
 
-> **Verkabelungs-Tipp:** Wenn du einen Standard-MAX485- oder SP3485-Transceiver nutzt, schließe die Pins DE (Driver Enable) und RE (Receiver Enable, active low) zusammen an den **GPIO 4** des ESP32 an. Das Programm schaltet diesen Pin automatisch auf `HIGH` vor dem Senden und danach sofort wieder auf `LOW`, um auf Empfang zu schalten.
+Beim Start wird zuerst das Magnetventil geoeffnet, danach der Kompressor
+geschaltet. Beim Stop wird zuerst der Kompressor abgeschaltet, danach das
+Magnetventil geschlossen.
 
----
+### Lueftersteuerung
 
-## 6. HMI-Bedienung: Einklappbare Sektionen
+`controlFan()` schaltet den Luefter nur bei laufendem Kompressor. Die Ein- und
+Auszeiten sowie die Zielstufe werden ueber `/api/fan` gespeichert.
 
-Um die Übersichtlichkeit auf Smartphones zu wahren, sind alle Kacheln in den **Anlagen-Einstellungen** sowie auf der **Serviceebene** einklappbar gestaltet:
-* Jede Kachel verfügt über ein Kopfzeilen-Element (`.card-header`) mit einem Richtungs-Chevron (`▼`).
-* Ein Klick auf die Kopfzeile klappt den Inhalt der Kachel ein oder aus.
-* Die Klasse `.collapsible` steuert dieses Verhalten CSS-seitig und blendet den Inhalt (`.card-content`) sanft aus oder ein, während der Chevron rotiert.
+### Heizstab
 
----
+Im aktuellen Normalbetrieb wird K2 gesetzt, wenn der Kompressor laeuft und die
+Warmwassertemperatur ueber `maxWpTemp` liegt. Der Parameter `heatingRodDelay`
+wird aktuell gespeichert und in der HMI angezeigt, ist in der Regelung aber noch
+nicht wirksam implementiert.
 
-## 7. WLAN Access-Point & Standard-Zugangsdaten
+## 8. Legionellen-Desinfektion
 
-Das Gateway spannt bei Inbetriebnahme oder nach einem Reset ein eigenes verschlüsseltes WLAN-Netzwerk auf.
+`runDisinfection()` verwendet folgende Phasen:
 
-* **Standard-SSID:** `Waermepumpe-Gateway-AP`
-* **Standard-Passwort:** `testpassword123`
-* **Standard-IP-Adresse:** `192.168.4.1` (oder mDNS: `http://hmi.local/`)
+```text
+heating_wp -> heating_both -> holding -> completed
+                         \-> failed bei Timeout
+```
 
-Die Zugangsdaten können im Web-HMI unter den Einstellungen geändert werden. Nach dem Speichern startet das Gateway neu und speichert die Daten im persistenten Flash-Speicher (`Preferences`).
+- `heating_wp`: Kompressor heizt, Heizstab aus.
+- `heating_both`: ab 55 Grad C wird der Heizstab zugeschaltet.
+- `holding`: Zieltemperatur erreicht, Heizstab haelt die Temperatur.
+- `completed`: Haltezeit abgelaufen, alle Relais aus.
+- `failed`: maximale Aufheizzeit ueberschritten oder Sicherheitsfehler.
 
-### Failsafe-Modus (Wiederherstellung bei vergessenen Zugangsdaten)
+## 9. Sicherheitskette
 
-Solltest du das selbst gewählte WLAN-Passwort vergessen haben, kannst du das HMI-Gateway in den **Failsafe-Modus** versetzen:
-1. Schalte das Gateway (oder die Versorgungsspannung des ESP32) ein.
-2. Schalte es innerhalb von **5 Sekunden** nach dem Start wieder aus und sofort wieder ein (**Double-Reset**).
-3. Das HMI-Gateway startet nun im Failsafe-Modus und spannt folgendes Notfall-WLAN auf:
-   * **Notfall-SSID:** `Gateway-AP`
-   * **Notfall-Passwort:** `failsafepw`
-4. Verbinde dich mit diesem WLAN und öffne die HMI-Oberfläche. Du kannst in den Einstellungen ein neues Passwort vergeben.
-5. Nach 5 Sekunden stabilem Betrieb im normalen Modus oder nach dem nächsten regulären Neustart läuft das Gateway wieder wie gewohnt mit deinen konfigurierten Daten.
+`checkSafety()` stoppt die Anlage bei:
 
+- Sensor-Timeout: keine gueltigen Sensorboard-Daten fuer mehr als 30 Sekunden
+- Hochdruck-Alarm
+- Niederdruck-Alarm
+
+Bei einem Sicherheitsfehler werden alle Relais ausgeschaltet, der Kompressor-
+State wird auf `KOMP_IDLE` gesetzt und ein aktives Legionellenprogramm wird als
+`failed` beendet.
+
+## 10. Web-HMI und Serviceebene
+
+Die Web-HMI liegt im Ordner `data/`:
+
+- `index.html`: Single-Page-App-Struktur
+- `css/style.css`: Darstellung
+- `js/app.js`: API-Polling, UI-Events, Simulation und Serviceebene
+- `sw.js`: PWA-Service-Worker
+- `manifest.webmanifest`: PWA-Manifest
+
+Die HMI pollt `/api/status` alle 2 Sekunden und `/api/sensors` alle 5 Sekunden.
+Wenn `/api/status` nicht erreichbar ist, wechselt die HMI in einen lokalen
+Simulationsmodus fuer Entwicklung/Demo.
+
+Die Serviceebene wird freigeschaltet, indem in der Navigation 5-mal auf
+`HMI Navigation` getippt wird. Dort werden interne Diagnosewerte und diese
+Dokumentation angezeigt.
+
+## 11. WLAN, Failsafe und Credentials-Push
+
+Standard-WLAN:
+
+| Feld | Wert |
+| --- | --- |
+| SSID | `Waermepumpe-Gateway-AP` |
+| Passwort | `testpassword123` |
+| Gateway-IP | `192.168.4.1` |
+
+Failsafe-WLAN bei Double-Reset:
+
+| Feld | Wert |
+| --- | --- |
+| SSID | `Waermepumpe-Gateway-AP-FAILSAFE` |
+| Passwort | `failsafepw` |
+
+Beim Aendern der WLAN-Daten ueber die HMI versucht das Gateway zuerst, die neuen
+Credentials an das Sensorboard zu senden:
+
+```text
+POST http://<sensorboard-ip>/api/config
+```
+
+Danach speichert das Gateway die eigenen AP-Daten im NVS und startet neu. Das
+Sensorboard speichert empfangene Zugangsdaten ebenfalls im NVS und startet neu.
+
+## 12. Bekannte offene Punkte
+
+- `operationMode` wird aktuell gespeichert und in der HMI angezeigt, beeinflusst
+  aber die reale Regelung noch kaum bzw. nicht vollstaendig.
+- `heatingRodDelay` ist als Parameter vorhanden, wird aber noch nicht in der
+  Heizstablogik verwendet.
+- Die Service-Tabelle in `data/js/app.js` ist eine Diagnoseansicht des internen
+  Zustands. Sie ist keine echte externe Modbus-Slave-Registermap.

@@ -1,297 +1,198 @@
-# ESP32-S3 Server-Setup für das Web-HMI
+# ESP32-S3 Gateway Setup fuer WP-HMI
 
-Dieses Dokument enthält den vollständigen C++-Programmcode für deinen **ESP32-S3** in VS Code (empfohlen mit **PlatformIO**, kann aber auch in der Arduino IDE verwendet werden). 
+Diese Datei beschreibt den aktuellen Projektaufbau und ersetzt die alte
+Mock-/SPS-Anleitung. Das Projekt besteht aus zwei Firmware-Zielen und einer
+Web-HMI, die auf das LittleFS-Dateisystem des Gateways geladen wird.
 
-Der Code implementiert:
-1. Einen **WLAN Access-Point (AP)** mit dem standardmäßigen Gateway-IP `192.168.4.1`.
-2. Einen **DNS-Server**, um alle Anfragen abzufangen und das **Captive Portal** automatisch zu triggern.
-3. Einen **Webserver**, der die Frontend-Dateien (HTML, CSS, JS, PWA-Manifest) aus dem **LittleFS**-Dateisystem des ESP32 ausliest und mit den korrekten MIME-Typen ausliefert.
-4. Die **API-Endpunkte** für den Austausch der Steuerungs- und Einstellungsdaten (Sollwert, Modbus-Status, Legionellen-Schutz, WLAN-Wechsel).
-
----
-
-## 1. VS Code Projektstruktur (PlatformIO)
-
-Erstelle in PlatformIO ein Projekt für das Board `esp32-s3-devkitc-1` (oder dein entsprechendes S3-Board). Kopiere deine Frontend-Dateien in einen Ordner namens `data` direkt im Projektverzeichnis:
+## 1. Projektstruktur
 
 ```text
-mein-hmi-projekt/
-├── data/                       # Deine Web-Dateien (wird auf das ESP32-Dateisystem geladen)
-│   ├── index.html
-│   ├── manifest.webmanifest
-│   ├── sw.js
-│   ├── css/
-│   │   └── style.css
-│   └── js/
-│       └── app.js
-├── src/
-│   └── main.cpp                # Der untenstehende C++ Code
-└── platformio.ini              # Konfigurationsdatei
+HMI/
+|-- platformio.ini
+|-- partitions.csv
+|-- scripts/
+|   `-- post_upload_fs.py
+|-- src/
+|   `-- main.cpp              # ESP32-S3 Gateway
+|-- src_wroom/
+|   `-- main.cpp              # Sensorboard ESP32-S3-N16R8
+`-- data/
+    |-- index.html
+    |-- css/style.css
+    |-- js/app.js
+    |-- sw.js
+    |-- manifest.webmanifest
+    |-- MODBUS_DE.md
+    `-- rm-icon-scalable.svg
 ```
 
-### platformio.ini
-Trage folgende Konfiguration ein. Sie bindet das moderne Dateisystem **LittleFS** und die benötigte JSON-Bibliothek ein:
+## 2. PlatformIO Environments
 
-```ini
-[env:esp32s3]
-platform = espressif32
-board = esp32-s3-devkitc-1
-framework = arduino
-monitor_speed = 115200
+### `s3_gateway`
 
-# LittleFS als Dateisystem definieren
-board_build.filesystem = littlefs
+Firmware fuer das ESP32-S3 Gateway.
 
-lib_deps =
-    bblanchon/ArduinoJson @ ^7.0.0
+Aufgaben:
+
+- WLAN Access Point und Captive Portal
+- Webserver fuer die HMI-Dateien aus LittleFS
+- REST-API fuer HMI und Sensorboard
+- NVS-Speicherung der Einstellungen
+- Modbus-RTU-Master fuer das Waveshare 8-Kanal-Relaisboard
+- Regelung fuer Kompressor, Heizstab, Luefter und Magnetventil
+- Sicherheitskette fuer Sensor-Timeout, HD und ND
+
+Wichtige Bibliotheken:
+
+- `bblanchon/ArduinoJson`
+- `emelianov/modbus-esp8266`
+
+### `wroom_sensor`
+
+Firmware fuer das Sensorboard ESP32-S3-N16R8.
+
+Aufgaben:
+
+- DS18B20 Warmwasser lesen
+- DS18B20 Verdampfer lesen
+- HD/ND-Druckschalter lesen
+- Sensordaten per HTTP an das Gateway senden
+- neue WLAN-Zugangsdaten vom Gateway per `/api/config` entgegennehmen
+
+Wichtige Bibliotheken:
+
+- `bblanchon/ArduinoJson`
+- `milesburton/DallasTemperature`
+- `paulstoffregen/OneWire`
+
+## 3. Build und Upload
+
+Gateway-Firmware flashen:
+
+```powershell
+pio run -e s3_gateway --target upload
 ```
 
----
+Sensorboard-Firmware flashen:
 
-## 2. ESP32-S3 C++ Sourcecode (`src/main.cpp`)
-
-Kopiere diesen Code in deine `src/main.cpp` Datei:
-
-```cpp
-#include <Arduino.h>
-#include <WiFi.h>
-#include <WebServer.h>
-#include <DNSServer.h>
-#include <LittleFS.h>
-#include <ArduinoJson.h>
-
-// --- WLAN-Konfiguration ---
-const char* apSSID = "Waermepumpe-Gateway-AP";
-const char* apPassword = "testpassword123"; // Mindestens 8 Zeichen!
-
-// --- Globale Register / Variablen (Modbus-Status-Mocks) ---
-struct HMIState {
-  bool powerOn = true;
-  float setpoint = 48.0;
-  float currentTemp = 45.2;
-  float evaporatorTemp = 6.4;
-  int fanSpeed = 1450;
-  bool heatingActive = true;
-  bool modbusConnected = true;
-  
-  // Legionellen-Desinfektion
-  bool disinfActive = false;
-  int disinfTarget = 62;
-  int disinfHold = 45;
-  int disinfMaxTime = 120;
-  char disinfStatus[12] = "idle";
-} state;
-
-// --- Netzwerk-Objekte ---
-WebServer server(80);
-DNSServer dnsServer;
-const byte DNS_PORT = 53;
-
-// --- API-Handler ---
-
-// GET /api/status - Liefert den gesamten Systemzustand als JSON
-void handleGetStatus() {
-  JsonDocument doc;
-  doc["powerOn"] = state.powerOn;
-  doc["setpoint"] = state.setpoint;
-  doc["currentTemp"] = state.currentTemp;
-  doc["evaporatorTemp"] = state.evaporatorTemp;
-  doc["fanSpeed"] = state.fanSpeed;
-  doc["heatingActive"] = state.heatingActive;
-  doc["modbusConnected"] = state.modbusConnected;
-  
-  doc["disinfActive"] = state.disinfActive;
-  doc["disinfTarget"] = state.disinfTarget;
-  doc["disinfHold"] = state.disinfHold;
-  doc["disinfMaxTime"] = state.disinfMaxTime;
-  doc["disinfStatus"] = state.disinfStatus;
-
-  String response;
-  serializeJson(doc, response);
-  server.send(200, "application/json", response);
-}
-
-// POST /api/setpoint - Aktualisiert den Warmwasser-Sollwert
-void handlePostSetpoint() {
-  if (server.hasArg("plain")) {
-    JsonDocument doc;
-    deserializeJson(doc, server.arg("plain"));
-    if (doc.containsKey("setpoint")) {
-      state.setpoint = doc["setpoint"].as<float>();
-      Serial.printf("Neuer Sollwert empfangen: %.1f °C\n", state.setpoint);
-      server.send(200, "application/json", "{\"status\":\"ok\"}");
-      return;
-    }
-  }
-  server.send(400, "application/json", "{\"status\":\"error\",\"msg\":\"Ungültige Parameter\"}");
-}
-
-// POST /api/power - Schaltet die Anlage Ein oder Aus
-void handlePostPower() {
-  if (server.hasArg("plain")) {
-    JsonDocument doc;
-    deserializeJson(doc, server.arg("plain"));
-    if (doc.containsKey("powerOn")) {
-      state.powerOn = doc["powerOn"].as<bool>();
-      Serial.printf("Anlage geschaltet: %s\n", state.powerOn ? "EIN" : "AUS");
-      server.send(200, "application/json", "{\"status\":\"ok\"}");
-      return;
-    }
-  }
-  server.send(400, "application/json", "{\"status\":\"error\"}");
-}
-
-// POST /api/wifi - Ändert die WLAN SSID & das Passwort und startet das Gateway neu
-void handlePostWifi() {
-  if (server.hasArg("plain")) {
-    JsonDocument doc;
-    deserializeJson(doc, server.arg("plain"));
-    if (doc.containsKey("ssid") && doc.containsKey("password")) {
-      String newSsid = doc["ssid"].as<String>();
-      String newPass = doc["password"].as<String>();
-      
-      Serial.println("Neue WLAN-Daten erhalten. Speichere und starte neu...");
-      server.send(200, "application/json", "{\"status\":\"rebooting\"}");
-      
-      delay(1000);
-      // HINWEIS: Hier würdest du die SSID und das Passwort im EEPROM oder NVS (Non-Volatile Storage) speichern!
-      // Nach dem Neustart lädt der ESP32 die Zugangsdaten aus dem NVS.
-      ESP.restart();
-      return;
-    }
-  }
-  server.send(400, "application/json", "{\"status\":\"error\"}");
-}
-
-// --- Dateiverwaltung (LittleFS) ---
-
-// MIME-Typen anhand des Dateinamens ermitteln
-String getContentType(String filename) {
-  if (filename.endsWith(".html")) return "text/html";
-  if (filename.endsWith(".css")) return "text/css";
-  if (filename.endsWith(".js")) return "application/javascript";
-  if (filename.endsWith(".webmanifest")) return "application/manifest+json";
-  if (filename.endsWith(".ico")) return "image/x-icon";
-  if (filename.endsWith(".png")) return "image/png";
-  if (filename.endsWith(".svg")) return "image/svg+xml";
-  return "text/plain";
-}
-
-// Prüft, ob die Datei im LittleFS existiert und liefert sie aus
-bool handleFileRead(String path) {
-  Serial.println("Dateianfrage: " + path);
-  
-  // Wenn Pfad auf Verzeichnis verweist, index.html laden
-  if (path.endsWith("/")) {
-    path += "index.html";
-  }
-
-  String contentType = getContentType(path);
-  
-  // Im Flash nach der Datei suchen
-  if (LittleFS.exists(path)) {
-    File file = LittleFS.open(path, "r");
-    server.streamFile(file, contentType);
-    file.close();
-    return true;
-  }
-  
-  return false;
-}
-
-// --- Captive Portal Logik ---
-// Fängt alle DNS-Anfragen (wie apple.com, google.com) ab und leitet sie an das Gateway um
-void handleCaptivePortalRedirect() {
-  String host = server.hostHeader();
-  if (host != "192.168.4.1" && host != "hmi.local") {
-    Serial.println("Captive Portal Redirect ausgelöst für: " + host);
-    server.sendHeader("Location", "http://192.168.4.1/index.html", true);
-    server.send(302, "text/plain", ""); // Temporärer Redirect
-  } else {
-    if (!handleFileRead(server.uri())) {
-      server.send(404, "text/plain", "Datei nicht gefunden im LittleFS!");
-    }
-  }
-}
-
-void setup() {
-  Serial.begin(115200);
-  delay(1000);
-  
-  // LittleFS initialisieren
-  if (!LittleFS.begin(true)) {
-    Serial.println("Fehler beim Initialisieren von LittleFS!");
-    return;
-  }
-  Serial.println("LittleFS erfolgreich gemountet.");
-
-  // Access Point konfigurieren
-  WiFi.softAP(apSSID, apPassword);
-  IPAddress IP = WiFi.softAPIP();
-  Serial.print("WLAN-AP gestartet. SSID: ");
-  Serial.println(apSSID);
-  Serial.print("HMI-IP-Adresse: ");
-  Serial.println(IP);
-
-  // DNS-Server starten (fängt alle Anfragen * auf)
-  dnsServer.start(DNS_PORT, "*", IP);
-
-  // API Endpunkte registrieren
-  server.on("/api/status", HTTP_GET, handleGetStatus);
-  server.on("/api/setpoint", HTTP_POST, handlePostSetpoint);
-  server.on("/api/power", HTTP_POST, handlePostPower);
-  server.on("/api/wifi", HTTP_POST, handlePostWifi);
-
-  // Fallback: Für alle anderen Anfragen (wird für das Captive Portal und statische Dateien verwendet)
-  server.onNotFound(handleCaptivePortalRedirect);
-
-  // Webserver starten
-  server.begin();
-  Serial.println("HMI-Webserver gestartet.");
-}
-
-void loop() {
-  // DNS-Server-Anfragen verarbeiten
-  dnsServer.processNextRequest();
-  
-  // HTTP-Client-Anfragen verarbeiten
-  server.handleClient();
-  
-  // --- Simulierter Regler-Hintergrundprozess ---
-  // (Dieser Teil simuliert die spätere Modbus RTU Kommunikation mit der Arduino OPTA SPS)
-  static unsigned long lastTick = 0;
-  if (millis() - lastTick > 3000) {
-    lastTick = millis();
-    
-    if (state.modbusConnected && state.powerOn) {
-      if (state.heatingActive) {
-        state.currentTemp += 0.1;
-        if (state.currentTemp >= state.setpoint) {
-          state.currentTemp = state.setpoint;
-          state.heatingActive = false;
-        }
-      } else {
-        state.currentTemp -= 0.02;
-        if (state.currentTemp < state.setpoint - 1.5) {
-          state.heatingActive = true;
-        }
-      }
-    }
-  }
-}
+```powershell
+pio run -e wroom_sensor --target upload
 ```
 
----
+Beim Gateway ist `scripts/post_upload_fs.py` als Post-Upload-Script eingetragen.
+Nach einem Firmware-Upload wird dadurch automatisch auch das LittleFS-Dateisystem
+hochgeladen:
 
-## 3. Hochladen der Web-Dateien auf den ESP32
+```powershell
+pio run -e s3_gateway --target uploadfs
+```
 
-Um die Benutzeroberfläche auf den ESP32 zu übertragen, musst du das `data`-Verzeichnis in das LittleFS-Dateisystem flashen:
+Ein separates manuelles `uploadfs` ist damit normalerweise nicht noetig.
 
-### Über PlatformIO in VS Code:
-1. Klicke in der linken Seitenleiste auf das **PlatformIO-Ameisen-Symbol**.
-2. Klappe dein Projekt und das Menü **`Platform`** auf.
-3. Klicke auf **`Build Filesystem Image`**, um das Dateisystem-Image zu erstellen.
-4. Klicke anschließend auf **`Upload Filesystem Image`**, um den HMI-Ordner über USB auf den ESP32 zu überspielen.
-5. Führe danach wie gewohnt ein **`Upload`** des normalen C++ Programmcodes aus.
+## 4. Partitionen
 
-Nach dem Hochladen startet das Board neu. Sobald du dich mit deinem Handy mit dem WLAN **`Waermepumpe-Gateway-AP`** verbindest, öffnet sich das HMI-Bedienfeld automatisch als Captive Portal!
+`partitions.csv` fixiert die LittleFS-Adresse, damit Webdateien bei
+Firmware-Updates nicht versehentlich durch eine geaenderte Partitionierung
+verloren gehen.
+
+Aktuelle Aufteilung:
+
+| Bereich | Offset | Groesse |
+| --- | ---: | ---: |
+| NVS | `0x9000` | `0x5000` |
+| OTA Data | `0xe000` | `0x2000` |
+| App | `0x10000` | `0x660000` |
+| LittleFS | `0x670000` | `0x190000` |
+
+## 5. Gateway-Hardware
+
+Aktuelle RS485-Pins im Gateway-Code:
+
+| Funktion | GPIO |
+| --- | ---: |
+| RS485 TX | 17 |
+| RS485 RX | 18 |
+| RS485 DE/RE | 21 |
+
+Relaisboard:
+
+- Waveshare 8-Ch Modbus RTU Relay Board
+- Slave-ID: `1`
+- Baudrate: `9600`
+- Format: `8N1`
+
+Relaisbelegung:
+
+| Relais | Funktion |
+| --- | --- |
+| K1 | Kompressor |
+| K2 | Heizstab |
+| K3 | Luefter niedrig |
+| K4 | Luefter hoch |
+| K5 | Magnetventil |
+| K6-K8 | Reserve |
+
+## 6. Sensorboard-Hardware
+
+Aktuelle Pins im Sensorboard-Code:
+
+| Funktion | GPIO |
+| --- | ---: |
+| DS18B20 Warmwasser | 4 |
+| DS18B20 Verdampfer | 5 |
+| Hochdruck-Schalter HD | 6 |
+| Niederdruck-Schalter ND | 7 |
+
+Hinweis: Beim ESP32-S3-N16R8 sind GPIO 26 bis 37 intern fuer OctalSPI
+Flash/PSRAM reserviert.
+
+## 7. WLAN und Failsafe
+
+Standard-AP des Gateways:
+
+| Feld | Wert |
+| --- | --- |
+| SSID | `Waermepumpe-Gateway-AP` |
+| Passwort | `testpassword123` |
+| IP | `192.168.4.1` |
+
+Failsafe-AP nach Double-Reset:
+
+| Feld | Wert |
+| --- | --- |
+| SSID | `Waermepumpe-Gateway-AP-FAILSAFE` |
+| Passwort | `failsafepw` |
+
+Double-Reset bedeutet: Gateway einschalten, innerhalb von 5 Sekunden wieder aus-
+und einschalten. Danach wird einmalig das Failsafe-WLAN gestartet.
+
+## 8. HMI verwenden
+
+1. Gateway flashen.
+2. Sensorboard flashen.
+3. Mit dem WLAN `Waermepumpe-Gateway-AP` verbinden.
+4. Browser auf `http://192.168.4.1/` oeffnen.
+
+Die HMI ist eine lokale PWA. Der Service Worker cached statische Dateien, aber
+API-Anfragen unter `/api/` werden nicht gecached.
+
+## 9. Serviceebene
+
+In der HMI ist die Serviceebene versteckt. Zum Freischalten 5-mal auf den Titel
+`HMI Navigation` im Seitenmenue tippen.
+
+Dort sichtbar:
+
+- interner Systemzustand als Diagnose-Tabelle
+- geladene Datei `MODBUS_DE.md`
+
+Wichtig: Die Diagnose-Tabelle ist keine echte externe Modbus-Slave-Schnittstelle.
+Das Gateway ist aktuell Modbus-Master fuer das Relaisboard.
+
+## 10. Offene Implementierungspunkte
+
+- Die Betriebsmodi aus der HMI (`wp`, `wp_stab`, `stab`, `ext`, `wp_ext`) werden
+  gespeichert, sind aber in der echten Regelung noch nicht vollstaendig
+  umgesetzt.
+- `heatingRodDelay` wird gespeichert und angezeigt, ist aber noch nicht in die
+  Heizstablogik eingebunden.
